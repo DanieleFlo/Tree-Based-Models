@@ -15,7 +15,10 @@ knitr::opts_chunk$set(echo = TRUE)
 ### Librerie
 ```{r}
 library(ggplot2)
-library(scales)  # per formattare le percentuali
+library(scales)
+library(randomForest) 
+library(caret)
+library(dplyr)
 ```
 
 
@@ -23,7 +26,7 @@ library(scales)  # per formattare le percentuali
 
 ```{r}
 ds <- read.csv("StudentPerformanceFactors.csv")
-
+ds = data.frame(ds)
 
 # Lista di variabili categoriali
 categorical_vars <- c(
@@ -136,9 +139,56 @@ ggplot(ds, aes(x = Categorical_Exam_Score,
   theme_minimal(base_size = 14)
 ```
 
+## Divisione del dataset in train e test
+
+```{r}
+set.seed(123)
+ds$Exam_Score= NULL
+trainIndex <- createDataPartition(ds$Categorical_Exam_Score, 
+                                  p    = 0.8,
+                                  list = FALSE)
+
+train <- ds[ trainIndex, ]
+test  <- ds[-trainIndex, ]
+```
 
 
 # Analisi
+
+## Data aug
+
+
+## Random Forest
+
+```{r}
+ds$Exam_Score= NULL
+
+set.seed(11)
+ 
+rf_1 <- randomForest(Categorical_Exam_Score ~ . , data = train)
+plot(rf_1, col="#A20045", main="Random forest")
+varImpPlot(rf_1, main="Variable importance", pch = 19, color="#A20045")
+```
+
+```{r}
+pred = predict(rf_1)
+confusionMatrix(pred, train$Categorical_Exam_Score)
+```
+
+```{r}
+pred_test = predict(rf_1, newdata = test)
+confusionMatrix(pred_test, test$Categorical_Exam_Score)
+```
+
+
+```{r}
+mtry_1 = rf_1$mtry
+```
+
+## Boosting
+
+## CART
+
 
 
 
