@@ -1,0 +1,145 @@
+---
+title: "Untitled"
+output: pdf_document
+date: "2025-04-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduzione
+
+
+
+### Librerie
+```{r}
+library(ggplot2)
+library(scales)  # per formattare le percentuali
+```
+
+
+# Import del dataset e analisi preliminare
+
+```{r}
+ds <- read.csv("StudentPerformanceFactors.csv")
+
+
+# Lista di variabili categoriali
+categorical_vars <- c(
+  "Parental_Involvement", "Access_to_Resources", "Extracurricular_Activities",
+  "Motivation_Level", "Internet_Access", "Family_Income", "Teacher_Quality",
+  "School_Type", "Peer_Influence", "Learning_Disabilities",
+  "Parental_Education_Level", "Distance_from_Home", "Gender"
+)
+
+ds[categorical_vars] <- lapply(ds[categorical_vars], factor)
+
+head(ds)
+```
+
+#### Descrizione delle variabili
+```{r}
+colnames(ds)
+```
+
+*   **Hours_Studied**	Numero di ore spese studiando a settimana.
+*   **Attendance** Percentuale di lezioni frequentate.
+*   **Parental_Involvement** Livello di coinvolgimento genitoriale nella formazione dello studente (Low, Medium, High).
+*   **Access_to_Resources**	Disponibilità di risorse educative(Low, Medium, High).
+*   **Extracurricular_Activities** Partecipazione ad attività extracurriculari (Yes, No).
+*   **Sleep_Hours**	Numero medio di ore di sonno a notte.
+*   **Previous_Scores**	Punteggio degli esami precedenti.
+*   **Motivation_Level** Livello di motivazione dello studente (Low, Medium, High).
+*   **Internet_Access**	Disponibilità di accesso ad Internet (Yes, No).
+*   **Tutoring_Sessions**	Numero di sessioni di tutoraggio frequentata al mese.
+*   **Family_Income**	Livello di reddito familiare (Low, Medium, High).
+*   **Teacher_Quality**	Qualità dell'insegnamento (Low, Medium, High).
+*   **School_Type**	Tipo di scuola frequentata (Public, Private).
+*   **Peer_Influence**	Influenza dei pari sulla performance accademica (Positive, Neutral, Negative).
+*   **Physical_Activity**	Numero medio di ore di attività fisica a settimana.
+*   **Learning_Disabilities**	Presenza di difficoltà di apprendimento (Yes, No).
+*   **Parental_Education_Level**	Livello più alto di educazione dei genitori (High School, College, Postgraduate).
+*   **Distance_from_Home**	Distanza da casa a scuola (Near, Moderate, Far).
+*  **Gender**	Genere dello studente (Male, Female).
+*   **Exam_Score**	Punteggio dell' esame finale.
+
+
+
+```{r}
+summary(ds)
+```
+
+
+```{r}
+str(ds)
+```
+
+
+```{r}
+ggplot(ds, aes(x = Exam_Score)) +
+  geom_histogram(
+    binwidth = 3,               # larghezza del bin; modificala a seconda della granularità desiderata
+    fill     = "skyblue",       # colore interno delle barre
+    color    = "white"          # colore del bordo delle barre
+  ) +
+  labs(
+    x     = "Exam Score",
+    y     = "Frequenza",
+    title = "Istogramma di Exam_score"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+
+Trasformiamo la variabile Exam_Score in un variabile categorica.
+```{r}
+ds$Categorical_Exam_Score <- cut(
+  ds$Exam_Score,
+  breaks = c(54, 61, 64, 67, 70, 73, 102),
+  labels = c("Quasi-Sufficiente", "Basso", "Medio-Basso", "Medio", "Medio-Alto", "Alto"),
+  include.lowest = FALSE,
+  right = TRUE
+)
+
+table(ds$Categorical_Exam_Score)/length(ds$Categorical_Exam_Score)*100
+
+ggplot(ds, aes(x = Categorical_Exam_Score, 
+               fill = Categorical_Exam_Score)) +
+  # barre con proporzione
+  geom_bar(
+    aes(y = after_stat(count) / sum(after_stat(count))),
+    stat = "count",
+    width = 0.7,
+    show.legend = FALSE
+  ) +
+  # percentuali sopra le barre
+  geom_text(
+    aes(
+      label = percent(after_stat(count) / sum(after_stat(count)), accuracy = 1),
+      y     = after_stat(count) / sum(after_stat(count))
+    ),
+    stat = "count",
+    vjust = -0.5
+  ) +
+  # scala y in percentuale e un po’ di spazio in alto
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    x     = "Categoria punteggio d'esame",
+    y     = "Percentuale di osservazioni",
+    title = "Distribuzione normalizzata di Categorical Exam Score"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+
+# Analisi
+
+
+
+# Conclusioni
