@@ -19,6 +19,7 @@ library(scales)
 library(randomForest) 
 library(caret)
 library(dplyr)
+library(gbm)
 ```
 
 
@@ -364,6 +365,10 @@ ggplot(train_augmented, aes(x = Categorical_Exam_Score,
 AUg
 
 ```{r}
+
+p <- NCOL(train_augmented) - 1
+
+
 set.seed(11)
  
 rf_1_aug <- randomForest(Categorical_Exam_Score ~ . , data = train_augmented)
@@ -422,6 +427,205 @@ confusionMatrix(pred_test_2, test_2$Categorical_Exam_Score)
 ```
 
 ## Boosting
+
+```{r, warning=FALSE}
+set.seed(123)
+
+# interaction.depth = d
+# default assume no xvalidation
+boost.1 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 2000, interaction.depth = 4, shrinkage=0.1)
+summary( boost.1)
+```
+
+
+```{r, warning=FALSE}
+
+calculate_rowwise_error <- function(real_matrix, predicted_matrix, epsilon = 1e-15) {
+  real_matrix <- as.matrix(real_matrix)
+  predicted_matrix <- as.matrix(predicted_matrix)
+  errors <- -rowSums(real_matrix * log(predicted_matrix))
+  return(errors)
+}
+
+softmax <- function(logits) {
+  stable_logits <- logits - max(logits) # Stabilità numerica
+  exp_logits <- exp(stable_logits)
+  return(exp_logits / sum(exp_logits))
+}
+
+n.trees.seq <- seq(from = 20, to = 2000, by = 30)
+
+test_matrix_onehot <- model.matrix(~ test$Categorical_Exam_Score - 1)
+train_matrix_onehot <- model.matrix(~ train$Categorical_Exam_Score - 1)
+
+Yhat_logits_array_test <- predict(boost.1,
+                             newdata = test,
+                             n.trees = n.trees.seq 
+                             )
+
+Yhat_logits_array_train <- predict(boost.1, n.trees = n.trees.seq)
+
+
+
+error_matrix_test <- matrix(NA, nrow = 1, ncol = length(n.trees.seq),
+                       dimnames = list("MeanCrossEntropy",
+                                       paste0("nTrees_", n.trees.seq)))
+error_matrix_train <- matrix(NA, nrow = 1, ncol = length(n.trees.seq),
+                       dimnames = list("MeanCrossEntropy",
+                                       paste0("nTrees_", n.trees.seq)))
+
+for (i in 1:length(n.trees.seq)) {
+  current_n_trees <- n.trees.seq[i]
+  
+  current_logits_test <- Yhat_logits_array_test[,,i]
+  current_probs_test <- t(apply(current_logits_test, 1, softmax))
+  
+  rowwise_errors_test <- calculate_rowwise_error(test_matrix_onehot, current_probs_test)
+  mean_error_test <- mean(rowwise_errors_test)
+  error_matrix_test[1, i] <- mean_error_test
+  
+  current_logits_train <- Yhat_logits_array_train[,,i]
+  current_probs_train <- t(apply(current_logits_train, 1, softmax))
+  
+  rowwise_errors_train <- calculate_rowwise_error(train_matrix_onehot, current_probs_train)
+  mean_error_train <- mean(rowwise_errors_train)
+  error_matrix_train[1, i] <- mean_error_train
+
+}
+
+
+matplot(n.trees.seq, cbind(error_matrix_test[1, ], error_matrix_train[1, ]), pch=19 , col=c("#A20045","#00484D"),type="b",ylab="CrossEntropy",xlab="n. trees")
+legend("topright",legend=c("Train Error","Test Error"),pch=19, col=c("#A20045","#00484D"))
+
+```
+
+
+
+
+```{r, warning=FALSE}
+set.seed(123)
+boost.2 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 1000, interaction.depth = 4, shrinkage=0.1, cv.folds = 5)
+
+# Choose number of trees via xvalidation error
+best.nt = gbm.perf(boost.2, method = "cv", plot.it = TRUE)
+best.nt
+```
+
+
+```{r, warning=FALSE}
+myd <- 1:7
+test_matrix_onehot <- model.matrix(~ test$Categorical_Exam_Score - 1)
+train_matrix_onehot <- model.matrix(~ train$Categorical_Exam_Score - 1)
+
+myEval <- sapply(myd , function(x) {
+  set.seed(123)
+  boost.3 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 1000, interaction.depth = x, shrinkage=0.1, cv.folds = 5)
+  
+  ### best n. trees
+  best.nt2 <- gbm.perf(boost.3, method = "cv", plot.it = FALSE) 
+  
+  
+  Yhat_test <- predict(boost.3, newdata = test,n.trees = best.nt2)
+  Yhat_test = t(apply(Yhat_test, 1, softmax))
+  
+  Yhat_train <- predict(boost.3, n.trees = best.nt2)
+  Yhat_train = t(apply(Yhat_train, 1, softmax))
+  
+  ### MSE
+  loss_train = mean(calculate_rowwise_error(train_matrix_onehot, Yhat_train))
+  loss_test = mean(calculate_rowwise_error(test_matrix_onehot, Yhat_test))
+  
+  
+  return(c(as.integer(best.nt2), round(loss_train,3), round(loss_test,3)))}
+  )
+
+myEval
+```
+
+```{r, warning=FALSE}
+myEval_invertita <- t(myEval)
+
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 1))
+
+# Primo grafico: best.nt2
+plot(1:7, myEval_invertita[,1], type = "b", pch = 19, col = "red",
+     xlab = "depth", ylab = "best.nt2",
+     main = "Andamento di best.nt2")
+
+plot(1:7, myEval_invertita[,2], type = "b", pch = 19, col = "green", 
+     xlab = "depth", ylab = "CrossEntropy", 
+     main = "Andamento della CrossEntropy sul train e test", 
+     ylim = range(c(myEval_invertita[,2], myEval_invertita[,3])))  # Impostare limiti y
+lines(1:7, myEval_invertita[,3], type = "b", pch = 19, col = "blue", lwd = 2)
+
+# Legenda
+legend("topright",
+       legend = c("Loss train", "Loss test"),
+       col    = c("green", "blue"),
+       pch    = 19)
+
+indice_minimo <- which.min(myEval_invertita[,3])
+best_nt= myEval_invertita[,1][indice_minimo]
+best_depth =  indice_minimo
+best_depth
+best_nt
+```
+```{r, warning=FALSE}
+set.seed(123)
+boost.final <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = best_nt, interaction.depth = best_depth, shrinkage=0.1, cv.folds = 5)
+
+# Effettua le previsioni sul set di training
+predictions_train_probs <- predict(boost.final, newdata = train, n.trees = best_nt, type = "response")
+predictions_train <- apply(predictions_train_probs, 1, which.max)
+predicted_classes_train <- levels(train$Categorical_Exam_Score)[predictions_train]
+
+# Calcola l'accuracy sul set di training
+confusion_matrix_train <- confusionMatrix(factor(predicted_classes_train, levels = levels(train$Categorical_Exam_Score)), train$Categorical_Exam_Score)
+accuracy_train <- confusion_matrix_train$overall["Accuracy"]
+cat("Accuracy sul set di training:", accuracy_train, "\n")
+
+# Effettua le previsioni sul set di test
+predictions_test_probs <- predict(boost.final, newdata = test, n.trees = best_nt, type = "response")
+predictions_test <- apply(predictions_test_probs, 1, which.max)
+predicted_classes_test <- levels(test$Categorical_Exam_Score)[predictions_test]
+
+# Calcola l'accuracy sul set di test
+confusion_matrix_test <- confusionMatrix(factor(predicted_classes_test, levels = levels(test$Categorical_Exam_Score)), test$Categorical_Exam_Score)
+accuracy_test <- confusion_matrix_test$overall["Accuracy"]
+cat("Accuracy sul set di test:", accuracy_test, "\n")
+```
+
+```{r}
+train_labels_factor <- factor(train$Categorical_Exam_Score, levels = levels(factor(predicted_classes_train)))
+test_labels_factor <- factor(test$Categorical_Exam_Score, levels = levels(factor(predicted_classes_test)))
+
+# Confusion matrix sul set di training
+confusion_matrix_train <- confusionMatrix(factor(predicted_classes_train, levels = levels(train_labels_factor)), train_labels_factor)
+print("Confusion Matrix - Training Set:")
+print(confusion_matrix_train)
+
+# Confusion matrix sul set di test
+confusion_matrix_test <- confusionMatrix(factor(predicted_classes_test, levels = levels(test_labels_factor)), test_labels_factor)
+print("Confusion Matrix - Test Set:")
+print(confusion_matrix_test)
+```
+
+```{r}
+summary(boost.final)
+```
+
+```{r}
+plot(boost.final$train.error, type = "l", xlab = "Numero di alberi", ylab = "Errore di training")
+lines(boost.final$cv.error, col = "red")
+legend("topright", legend = c("Training Error", "Cross-Validation Error"), col = c("black", "red"), lty = 1)
+```
+
+
+
+
+
+
+
 
 ## CART
 
