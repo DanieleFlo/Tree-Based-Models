@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 ### Librerie
-```{r}
+```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
 library(scales)
 library(randomForest) 
@@ -98,6 +98,18 @@ ggplot(ds, aes(x = Exam_Score)) +
 
 Trasformiamo la variabile Exam_Score in un variabile categorica.
 ```{r}
+
+ds_2 = ds
+
+ds_2$Categorical_Exam_Score <- cut(
+  ds$Exam_Score,
+  breaks = c(54, 64, 67, 70, 102),
+  labels = c("Sufficiente", "Basso", "Medio", "Alto"),
+  include.lowest = FALSE,
+  right = TRUE
+)
+
+
 ds$Categorical_Exam_Score <- cut(
   ds$Exam_Score,
   breaks = c(54, 61, 64, 67, 70, 73, 102),
@@ -105,8 +117,6 @@ ds$Categorical_Exam_Score <- cut(
   include.lowest = FALSE,
   right = TRUE
 )
-
-table(ds$Categorical_Exam_Score)/length(ds$Categorical_Exam_Score)*100
 
 ggplot(ds, aes(x = Categorical_Exam_Score, 
                fill = Categorical_Exam_Score)) +
@@ -137,19 +147,63 @@ ggplot(ds, aes(x = Categorical_Exam_Score,
     title = "Distribuzione normalizzata di Categorical Exam Score"
   ) +
   theme_minimal(base_size = 14)
+
+ggplot(ds_2, aes(x = Categorical_Exam_Score, 
+               fill = Categorical_Exam_Score)) +
+  # barre con proporzione
+  geom_bar(
+    aes(y = after_stat(count) / sum(after_stat(count))),
+    stat = "count",
+    width = 0.7,
+    show.legend = FALSE
+  ) +
+  # percentuali sopra le barre
+  geom_text(
+    aes(
+      label = percent(after_stat(count) / sum(after_stat(count)), accuracy = 1),
+      y     = after_stat(count) / sum(after_stat(count))
+    ),
+    stat = "count",
+    vjust = -0.5
+  ) +
+  # scala y in percentuale e un po’ di spazio in alto
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    x     = "Categoria punteggio d'esame",
+    y     = "Percentuale di osservazioni",
+    title = "Distribuzione normalizzata di Categorical Exam Score"
+  ) +
+  theme_minimal(base_size = 14)
 ```
+
 
 ## Divisione del dataset in train e test
 
 ```{r}
 set.seed(123)
 ds$Exam_Score= NULL
+
 trainIndex <- createDataPartition(ds$Categorical_Exam_Score, 
-                                  p    = 0.8,
+                                  p    = 0.5,
                                   list = FALSE)
 
 train <- ds[ trainIndex, ]
 test  <- ds[-trainIndex, ]
+```
+
+```{r}
+set.seed(123)
+ds_2$Exam_Score= NULL
+
+trainIndex_2 <- createDataPartition(ds_2$Categorical_Exam_Score, 
+                                  p    = 0.5,
+                                  list = FALSE)
+
+train_2 <- ds_2[ trainIndex, ]
+test_2  <- ds_2[-trainIndex, ]
 ```
 
 
@@ -157,14 +211,181 @@ test  <- ds[-trainIndex, ]
 
 ## Data aug
 
+ROSE (Random Over‑Sampling Examples) è una tecnica di resampling per riequilibrare dataset sbilanciati, particolarmente utile quando la classe minoritaria ha pochissimi esempi rispetto alla classe maggioritaria. A differenza del semplice oversampling (che duplica casi esistenti) o del SMOTE (che interpola tra i vicini), ROSE sintetizza nuovi esempi attorno alle osservazioni reali utilizzando una densità di kernel multivariata, preservando la struttura locale dei dati.
+```{r}
+library(smotefamily)
+
+table(train$Categorical_Exam_Score)
+
+# Supponiamo: "Quasi-Sufficiente" e "Alto" sono le classi con pochi esempi
+rare_classes <- c("Quasi-Sufficiente", "Alto")
+# funzione di oversampling per una singola classe rara
+
+apply_smote_to_class <- function(data, class_target, rate = 2) {
+  # Crea etichetta binaria
+  data$binary_target <- ifelse(data$Categorical_Exam_Score == class_target, 1, 0)
+  
+  # SMOTE lavora solo su variabili numeriche → isoliamo features numeriche
+  x_vars <- data %>% select(where(is.numeric))
+  y_bin  <- data$binary_target
+  
+  # Applica SMOTE (genererà nuovi esempi della classe 1)
+  smote_out <- SMOTE(x_vars, y_bin, K = 12, dup_size = rate)
+  
+  # Recupera solo i sintetici generati (classe = 1)
+  synthetic <- smote_out$syn_data %>% 
+    mutate(Categorical_Exam_Score = class_target)
+  
+  # Rimuove colonna target binaria
+  synthetic <- synthetic %>% select(-class)
+  
+  return(synthetic)
+}
+
+# Applichiamo SMOTE a ciascuna classe rara
+synthetics <- lapply(rare_classes, function(cl) {
+  apply_smote_to_class(train, class_target = cl, rate = 2)  # dup_size controlla quanto ne vuoi
+})
+
+# Combiniamo i sintetici
+synthetic_data <- bind_rows(synthetics)
+
+# Unisci al train originale
+train_augmented <- bind_rows(train, synthetic_data)
+train_augmented$binary_target = NULL
+
+
+train_augmented$Categorical_Exam_Score = as.factor(train_augmented$Categorical_Exam_Score)
+
+# Controlla la nuova distribuzione
+table(train_augmented$Categorical_Exam_Score)
+
+
+```
+```{r}
+impute_categorical_na_by_class_mode <- function(data, class_col, rare_classes) {
+  # Identifica colonne categoriali (escluse quelle già numeriche o il target)
+  categorical_cols <- data %>% select(where(~is.factor(.) || is.character(.))) %>% select(-all_of(class_col)) %>% colnames()
+  
+  for (cat_col in categorical_cols) {
+    for (rare_class in rare_classes) {
+      # Subset dei dati per la classe rara
+      subset_class <- data %>% 
+        filter(!!sym(class_col) == rare_class)
+      
+      # Calcola la moda ignorando gli NA
+      mode_val <- subset_class %>%
+        filter(!is.na(!!sym(cat_col))) %>%
+        count(!!sym(cat_col), sort = TRUE) %>%
+        slice(1) %>%
+        pull(!!sym(cat_col))
+      
+      # Sostituisci NA con la moda solo per la classe rara corrente
+      data <- data %>%
+        mutate(!!sym(cat_col) := ifelse(
+          is.na(!!sym(cat_col)) & (!!sym(class_col) == rare_class),
+          mode_val,
+          !!sym(cat_col)
+        ))
+    }
+  }
+  return(data)
+}
+
+
+train_augmented <- impute_categorical_na_by_class_mode(
+  data = train_augmented,
+  class_col = "Categorical_Exam_Score",
+  rare_classes = rare_classes
+)
+```
+
+
+```{r}
+colSums(is.na(train_augmented))
+```
+
+```{r}
+levels_list <- lapply(train[categorical_vars], function(x) {
+  # se sono factor mantieni i livelli, altrimenti estrai i valori unici
+  if (is.factor(x)) levels(x) else unique(as.character(x))
+})
+names(levels_list) <- categorical_vars
+
+# 2) “Decodifica” in train_augmented gli indici numerici usando levels_list
+for (var in categorical_vars) {
+  # train_augmented[[var]] contiene un intero da 1 a length(levels_list[[var]])
+  train_augmented[[var]] <- factor(
+    train_augmented[[var]],
+    levels = seq_along(levels_list[[var]]),
+    labels = levels_list[[var]]
+  )
+}
+```
+
+
+```{r}
+ggplot(train_augmented, aes(x = Categorical_Exam_Score, 
+               fill = Categorical_Exam_Score)) +
+  # barre con proporzione
+  geom_bar(
+    aes(y = after_stat(count) / sum(after_stat(count))),
+    stat = "count",
+    width = 0.7,
+    show.legend = FALSE
+  ) +
+  # percentuali sopra le barre
+  geom_text(
+    aes(
+      label = percent(after_stat(count) / sum(after_stat(count)), accuracy = 1),
+      y     = after_stat(count) / sum(after_stat(count))
+    ),
+    stat = "count",
+    vjust = -0.5
+  ) +
+  # scala y in percentuale e un po’ di spazio in alto
+  scale_y_continuous(
+    labels = percent_format(accuracy = 1),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    x     = "Categoria punteggio d'esame",
+    y     = "Percentuale di osservazioni",
+    title = "Distribuzione normalizzata di Categorical Exam Score"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+
 
 ## Random Forest
 
-```{r}
-ds$Exam_Score= NULL
+AUg
 
+```{r}
 set.seed(11)
  
+rf_1_aug <- randomForest(Categorical_Exam_Score ~ . , data = train_augmented)
+plot(rf_1_aug, col="#A20045", main="Random forest")
+varImpPlot(rf_1_aug, main="Variable importance", pch = 19, color="#A20045")
+```
+
+```{r}
+pred = predict(rf_1_aug)
+confusionMatrix(pred, train_augmented$Categorical_Exam_Score)
+```
+
+```{r}
+pred_test_aug = predict(rf_1_aug, newdata = test)
+pred_test_aug <- factor(pred_test_aug, levels = levels(test$Categorical_Exam_Score))
+confusionMatrix(pred_test_aug, test$Categorical_Exam_Score)
+```
+
+ NON aug
+
+```{r}
+set.seed(11)
 rf_1 <- randomForest(Categorical_Exam_Score ~ . , data = train)
 plot(rf_1, col="#A20045", main="Random forest")
 varImpPlot(rf_1, main="Variable importance", pch = 19, color="#A20045")
@@ -180,14 +401,78 @@ pred_test = predict(rf_1, newdata = test)
 confusionMatrix(pred_test, test$Categorical_Exam_Score)
 ```
 
+```{r}
+set.seed(11)
+ 
+rf_2 <- randomForest(Categorical_Exam_Score ~ . , data = train_2)
+plot(rf_2, col="#A20045", main="Random forest")
+varImpPlot(rf_2, main="Variable importance", pch = 19, color="#A20045")
+```
 
 ```{r}
-mtry_1 = rf_1$mtry
+set.seed(11)
+pred_2 = predict(rf_2)
+confusionMatrix(pred_2, train_2$Categorical_Exam_Score)
+```
+
+```{r}
+set.seed(11)
+pred_test_2 = predict(rf_2, newdata = test_2)
+confusionMatrix(pred_test_2, test_2$Categorical_Exam_Score)
 ```
 
 ## Boosting
 
 ## CART
+
+```{r}
+require(rpart)
+library(rpart.plot)
+
+mod0<- rpart::rpart(Categorical_Exam_Score~., data= train, method="class")
+mod0
+```
+
+```{r}
+rpart.plot::rpart.plot(mod0)
+```
+
+
+```{r}
+caret::confusionMatrix(table(predicted = predict(mod0, type = "class"), actual = train$Categorical_Exam_Score), positive = "1")
+```
+
+```{r}
+mytab <- table(predicted = predict(mod0, type = "class"), actual = train$Categorical_Exam_Score)
+mctest = (abs(mytab[2,1] - mytab[1,2]) -1)^2/(mytab[2,1] + mytab[1,2])
+mctest
+pchisq(mctest,1, lower.tail = FALSE)
+mcnemar.test(table(predicted = predict(mod0, type = "class"), actual = train$Categorical_Exam_Score), correct = TRUE)
+```
+
+Use of the loss matrix
+
+```{r}
+m = matrix(c(0,0,0,0,0,1.0,
+             0,0,0,0,0.2,0, 
+             0,0,0,0.1,0,0,
+             0,0,0.1,0,0,0, 
+             0,0.2,0,0,0,0, 
+             1.0,0,0,0,0,0),
+           byrow=TRUE, nrow=6)
+m
+mod0_loss<- rpart::rpart(Categorical_Exam_Score~., data= train, method="class", parms=list(loss=m))
+mod0_loss
+```
+```{r}
+rpart.plot::rpart.plot(mod0_loss)
+```
+```{r}
+caret::confusionMatrix(table(predicted = predict(mod0_loss, type = "class"), actual =  train$Categorical_Exam_Score), positive="1")
+```
+
+
+
 
 
 
