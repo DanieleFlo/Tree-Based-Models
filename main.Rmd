@@ -431,10 +431,10 @@ confusionMatrix(pred_test_2, test_2$Categorical_Exam_Score)
 ```{r, warning=FALSE}
 set.seed(123)
 
-# interaction.depth = d
-# default assume no xvalidation
-boost.1 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 2000, interaction.depth = 4, shrinkage=0.1)
-summary( boost.1)
+boost.1 <- gbm(Categorical_Exam_Score ~ ., data = train, 
+               distribution = "multinomial", n.trees = 2000, 
+               interaction.depth = 4, shrinkage=0.1)
+summary(boost.1)
 ```
 
 
@@ -495,7 +495,7 @@ for (i in 1:length(n.trees.seq)) {
 
 
 matplot(n.trees.seq, cbind(error_matrix_test[1, ], error_matrix_train[1, ]), pch=19 , col=c("#A20045","#00484D"),type="b",ylab="CrossEntropy",xlab="n. trees")
-legend("topright",legend=c("Train Error","Test Error"),pch=19, col=c("#A20045","#00484D"))
+legend("topright",legend=c("Test Error","Train Error"),pch=19, col=c("#A20045","#00484D"))
 
 ```
 
