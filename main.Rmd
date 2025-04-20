@@ -15,16 +15,18 @@ knitr::opts_chunk$set(echo = TRUE)
 ### Librerie
 ```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
+library(ggcorrplot)
 library(scales)
 library(randomForest) 
 library(caret)
 library(dplyr)
 library(gbm)
+library(smotefamily)
 ```
 
 
 # Import del dataset e analisi preliminare
-
+Attraverso il seguente codice è stato effettuato l'import del dataset scelto. Inoltre utilizzando la lista delle variabili categorieli è stato possibile convertirle in factor attraverso la funzione lapply. Vediamo in oltre un estratto del dataset in basso.
 ```{r}
 ds <- read.csv("StudentPerformanceFactors.csv")
 ds = data.frame(ds)
@@ -43,10 +45,7 @@ head(ds)
 ```
 
 #### Descrizione delle variabili
-```{r}
-colnames(ds)
-```
-
+Prima di iniziale la trattazione è utili fare un breve riassunto su quello che sono le variabili presenti nel dataset e del loro significato.
 *   **Hours_Studied**	Numero di ore spese studiando a settimana.
 *   **Attendance** Percentuale di lezioni frequentate.
 *   **Parental_Involvement** Livello di coinvolgimento genitoriale nella formazione dello studente (Low, Medium, High).
@@ -69,23 +68,22 @@ colnames(ds)
 *   **Exam_Score**	Punteggio dell' esame finale.
 
 
-
+Il dataset presenta sia variabili numeriche che categoriali, con valori ben distribuiti. Le ore di studio, la frequenza e le ore di sonno mostrano medie intorno a 20, 80 e 7 rispettivamente. La maggior parte degli studenti ha accesso a Internet e partecipa ad attività extracurricolari. Le categorie Parental Involvement, Motivation Level, e Family Income sono abbastanza bilanciate, mentre alcune categorie come Learning Disabilities e Gender mostrano distribuzioni sbilanciate. Il punteggio Exam_Score ha una media di circa 67, con valori compresi tra 55 e 101.
 ```{r}
 summary(ds)
 ```
 
-
+Vediamo il risultato della funzione str sul dataset, utile per comprendere i livelli delle variabili categoriche.
 ```{r}
 str(ds)
 ```
-
-
+La variabile di interesse in questa analisi è *Exam_Score*. Per comprenderne meglio la sua natura, osserviamo la sua distribuzione. Per fa ciò è stato realizzato un istogramma che ci mostra un andamento quasi normale della variabile in questione, con la maggior parte dei punteggi compresa tra 63 e 75, e una presenza limitata di valori estremi.
 ```{r}
 ggplot(ds, aes(x = Exam_Score)) +
   geom_histogram(
-    binwidth = 3,               # larghezza del bin; modificala a seconda della granularità desiderata
-    fill     = "skyblue",       # colore interno delle barre
-    color    = "white"          # colore del bordo delle barre
+    binwidth = 3,
+    fill     = "skyblue",
+    color    = "white" 
   ) +
   labs(
     x     = "Exam Score",
@@ -95,9 +93,58 @@ ggplot(ds, aes(x = Exam_Score)) +
   theme_minimal(base_size = 14)
 ```
 
+Analizzando la matrice di correlazione calcolata sul dataset, si osserva che la variabile Exam_Score mostra una forte correlazione con Attendance (0.58) e Hours_Studied (0.45). La stessa variabile presenta inoltre una correlazione, seppur più debole, anche con Previous_Scores e Tutoring_Sessions. Non emergono invece correlazioni rilevanti tra le altre variabili numeriche del dataset.
+```{r, warning=FALSE}
+matrix_corrplot = round(cor(select_if(ds, is.numeric), method="pearson"),4)
+ggcorrplot(matrix_corrplot, hc.order=T, type="lower", lab=T, lab_size = 2.7)
+```
+Alla luce dei risultati ottenuti dalla matrice di correlazione, è stato deciso di realizzare alcuni scatter plot per analizzare le variabili più significative. In questo grafico, è evidente come la variabile Exam_Score mostri una relazione lineare con la variabile Attendance. Inoltre, si osserva come la relazione tra le due variabili sembri essere influenzata dalla variabile categoriale Parental_Involvement, evidenziando una suddivisione dei bias presenti.
+```{r, warning=FALSE}
+ggplot(ds, aes(x = Attendance, y = Exam_Score, color=Parental_Involvement)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Attendance",
+    y = "Exam_Score",
+    title = "Scatter Plot: Attendance vs Exam_Score"
+  ) +
+  theme_minimal()
+```
+Analogamente a priama, è stata effettuata la analisi precedente ma questa volta sono state considerate le ore di studio settimanali (Hours_Studied). Anche in questo caso si nota una forte dipendenza lineare fra le due variabili con una distinzione in base Parental_Involvement.
 
+```{r, warning=FALSE}
+ggplot(ds, aes(x = Hours_Studied, y = Exam_Score, color=Parental_Involvement)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Hours_Studied",
+    y = "Exam_Score",
+    title = "Scatter Plot: Hours_Studied vs Exam_Score"
+  ) +
+  theme_minimal()
+```
 
-Trasformiamo la variabile Exam_Score in un variabile categorica.
+Di particolare interesse è anche la variabile Previous_Scores, che intuitivamente potrebbe sembrare quella più adatta per predire il valore di Exam_Score. Tuttavia, questa analisi mette in luce una notevole variabilità fra i dati, suggerendo che altre variabili potrebbero giocare un ruolo altrettanto rilevante nella previsione dei punteggi dell'esame finale.
+
+```{r, warning=FALSE}
+ggplot(ds, aes(x = Previous_Scores, y = Exam_Score, color=Parental_Involvement)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Previous_Scores",
+    y = "Exam_Score",
+    title = "Scatter Plot: Previous_Scores vs Exam_Score"
+  ) +
+  theme_minimal()
+```
+
+Poiché l'obiettivo di questa analisi è costruire un modello capace sia di individuare le variabili più rilevanti, sia di prevedere il rendimento di uno studente nell'esame finale, si è scelto di trasformare la variabile Exam_Score da numerica a categoriale.
+Infatti, non è tanto importante stimare il punteggio esatto che uno studente potrebbe ottenere, quanto piuttosto individuare la fascia di voto in cui è più probabile che si collochi. Questo approccio è utile anche per ipotizzare eventuali interventi didattici mirati, con l'intento di migliorare il percorso formativo degli studenti.
+Per raggiungere questo scopo, il codice seguente effettua tale trasformazione. Tuttavia, come mostrato nell'istogramma precedente, i punteggi sono concentrati in un intervallo molto ristretto. Per questo motivo sono stati creati due dataset con classificazioni differenti:
+- Il primo suddivide i voti in 6 classi, fornendo una stima più precisa del rendimento ma includendo due classi scarsamente rappresentate.
+- Il secondo utilizza 4 classi, semplificando il lavoro del modello a scapito però della precisione nella previsione del voto finale.
+
+In entrambi i casi, le fasce sono state definite sfruttando la simmetria della distribuzione attorno al valore medio (67), con l'obiettivo di bilanciare le classi. Inoltre, gli intervalli non sono equidistanti, in quanto le fasce più estreme hanno ampiezze maggiori per compensare la minore densità dei dati in quelle zone.
 ```{r}
 
 ds_2 = ds
@@ -183,6 +230,8 @@ ggplot(ds_2, aes(x = Categorical_Exam_Score,
 
 ## Divisione del dataset in train e test
 
+In questa sezione si è effettuata la suddivisione dei due dataset in train e test.
+Il seguente codice divide il datsaet con le classi di Categorical_Exam_Score più numerose.
 ```{r}
 set.seed(123)
 ds$Exam_Score= NULL
@@ -195,6 +244,7 @@ train <- ds[ trainIndex, ]
 test  <- ds[-trainIndex, ]
 ```
 
+Mentre il seguente codice divide il datsaet con le classi di Categorical_Exam_Score meno numerose.
 ```{r}
 set.seed(123)
 ds_2$Exam_Score= NULL
@@ -212,15 +262,14 @@ test_2  <- ds_2[-trainIndex, ]
 
 ## Data aug
 
-ROSE (Random Over‑Sampling Examples) è una tecnica di resampling per riequilibrare dataset sbilanciati, particolarmente utile quando la classe minoritaria ha pochissimi esempi rispetto alla classe maggioritaria. A differenza del semplice oversampling (che duplica casi esistenti) o del SMOTE (che interpola tra i vicini), ROSE sintetizza nuovi esempi attorno alle osservazioni reali utilizzando una densità di kernel multivariata, preservando la struttura locale dei dati.
-```{r}
-library(smotefamily)
+In questo paragrafo ci siamo concentrati sul sottoinsieme di addestramento (train), dove sono presenti le categorie con il maggior numero di osservazioni, con l'obiettivo di incrementare le classi meno rappresentate. A tal fine, abbiamo sfruttato la libreria smotefamily, che mette a disposizione la funzione SMOTE. Lo scopo di questa procedura è verificare se, bilanciando le classi tramite algoritmi di over‑sampling, è possibile migliorare le prestazioni predittive dei nostri modelli
 
+Il codice applica la funzione SMOTE per generare nuovi esempi sintetici per le due classi meno rappresentate, "rare", indicate nella lista rare_classes. La funzione trasformando il problema in un'etichettatura binaria, selezionando solo le variabili numeriche e applicando l'algoritmo SMOTE. I campioni sintetici generati vengono successivamente aggiunti al dataset originale, con la pulizia delle colonne temporanee e la verifica della nuova distribuzione delle classi per assicurarsi che l'over‑sampling abbia riequilibrato il dataseto quanto meno migliorato il problema .
+```{r}
 table(train$Categorical_Exam_Score)
 
-# Supponiamo: "Quasi-Sufficiente" e "Alto" sono le classi con pochi esempi
+# Quasi-Sufficiente" e "Alto" sono le classi con pochi esempi
 rare_classes <- c("Quasi-Sufficiente", "Alto")
-# funzione di oversampling per una singola classe rara
 
 apply_smote_to_class <- function(data, class_target, rate = 2) {
   # Crea etichetta binaria
@@ -230,7 +279,7 @@ apply_smote_to_class <- function(data, class_target, rate = 2) {
   x_vars <- data %>% select(where(is.numeric))
   y_bin  <- data$binary_target
   
-  # Applica SMOTE (genererà nuovi esempi della classe 1)
+  # Applica SMOTE
   smote_out <- SMOTE(x_vars, y_bin, K = 12, dup_size = rate)
   
   # Recupera solo i sintetici generati (classe = 1)
@@ -260,9 +309,9 @@ train_augmented$Categorical_Exam_Score = as.factor(train_augmented$Categorical_E
 
 # Controlla la nuova distribuzione
 table(train_augmented$Categorical_Exam_Score)
-
-
 ```
+
+Poiché la funzione SMOTE calcola nuovi valori solo per le variabili numeriche, lasciando vuoti i campi relativi alle variabili categoriali, si è deciso di riempire questi campi con il valore più comune della variabile categoriale per ciascuna classe. Questa scelta riduce la variabilità dei dati, ma, a seguito di valutazioni preliminari, si è constatato che eliminare completamente le variabili categoriali dal dataset comportava un notevole peggioramento delle performance. Pertanto, si è preferito inserire i valori mancanti invece di rimuovere del tutto queste variabili, per mantenere la coerenza e la ricchezza informativa del dataset.
 ```{r}
 impute_categorical_na_by_class_mode <- function(data, class_col, rare_classes) {
   # Identifica colonne categoriali (escluse quelle già numeriche o il target)
@@ -302,10 +351,7 @@ train_augmented <- impute_categorical_na_by_class_mode(
 ```
 
 
-```{r}
-colSums(is.na(train_augmented))
-```
-
+Per motivi di efficienza computazionale, le variabili categoriali presenti nel dataset aumentato nel codice precedente sono state codificate come indici corrispondenti ai livelli delle variabili categoriali stesse. Per rendere nuovamente il dataset facilmente interpretabile, il codice seguente converte questi indici nei rispettivi valori testuali, rendendo il dataset nuovamente leggibile e comprensibile.
 ```{r}
 levels_list <- lapply(train[categorical_vars], function(x) {
   # se sono factor mantieni i livelli, altrimenti estrai i valori unici
@@ -313,9 +359,8 @@ levels_list <- lapply(train[categorical_vars], function(x) {
 })
 names(levels_list) <- categorical_vars
 
-# 2) “Decodifica” in train_augmented gli indici numerici usando levels_list
+# Decodifica in train_augmented gli indici numerici usando levels_list
 for (var in categorical_vars) {
-  # train_augmented[[var]] contiene un intero da 1 a length(levels_list[[var]])
   train_augmented[[var]] <- factor(
     train_augmented[[var]],
     levels = seq_along(levels_list[[var]]),
@@ -325,6 +370,7 @@ for (var in categorical_vars) {
 ```
 
 
+Con il seguente codice è possibile visualizzare la frequenza percentuale delle variabili nel dataset aumentato. Si osserva come l'algoritmo abbia incrementato la rappresentatività delle classi meno numerose, bilanciando meglio la distribuzione delle categorie.
 ```{r}
 ggplot(train_augmented, aes(x = Categorical_Exam_Score, 
                fill = Categorical_Exam_Score)) +
@@ -427,7 +473,8 @@ confusionMatrix(pred_test_2, test_2$Categorical_Exam_Score)
 ```
 
 ## Boosting
-
+Vediamo ora come si comprta l'algoritmo di Boosting sul dateaset 1 contenente 6 classi. Si è deciso di testare solamente questo algorimo sul dataset con più classi quindi con una maggiore difficolta nella capacità di previsione in quanto ci si aspetta che questo sia più performante e che quindi possa darci molte più inforazione nella capacità di previsione con una maggior numero di classi da prevedere. Inizialmente si è proceduti con un modello base con 2000 alberi, con massiamo 4 rami per albero e un learning rate indicato dalla variabile di shrinkage paria a 0.1. Il parametro di shrinkage non è stato cambiato per tutta la trattazione in quanto 0.1 rappresenta il valore massiamo da cui partire e già da questo l'algoritmo inpiega molto tempo per essere eseguito, percui effettuare un fine tuning risulterebbe troppo difficoltoso. 
+Effettuando il summary del modello possiamo osservare sia la tabella con i valori di importanza relativi a ogni variabile sia un grafico a barre ottenuro da esse. Come visto anche per il modello precedente al primo posso possiamo trovare la variabile Attendance, e a seguire il numero di ore studiate.
 ```{r, warning=FALSE}
 set.seed(123)
 
@@ -438,15 +485,25 @@ summary(boost.1)
 ```
 
 
+Dal primo modello è stato possibile calcolare l'errore sia sul dataset di training che su quello di test. Per farlo, è stato necessario trasformare i risultati previsti, originariamente espressi come logaritmi delle probabilità, in probabilità vere e proprie comprese tra 0 e 1 per ciascuna classe, assicurandosi che la loro somma fosse pari a 1. A tal fine è stata implementata la funzione softmax.
+Poiché le etichette erano rappresentate in formato one-hot encoding, per il calcolo dell'errore è stata utilizzata la funzione di perdita cross entropy, confrontando i valori predetti con quelli attesi.
+Per ciascun numero di alberi (da 20 a 2000, con incrementi di 30), è stata calcolata la media dell'errore su tutte le previsioni, sia per il dataset di training che per quello di test. I risultati sono stati poi visualizzati nel grafico riportato alla fine del blocco di codice.
+Dal grafico si osserva che l'errore sul test set (curva rossa) raggiunge un minimo attorno ai 500 alberi, per poi aumentare progressivamente. Al contrario, l'errore sul training set (curva nera) mostra un andamento decrescente e monotono, segno che il modello continua ad apprendere anche oltre i 500 alberi.
+Questo comportamento evidenzia un chiaro caso di overfitting: il modello si adatta sempre meglio ai dati di training, ma a scapito della sua capacità di generalizzazione sui dati di test.
+
+
+
 ```{r, warning=FALSE}
 
-calculate_rowwise_error <- function(real_matrix, predicted_matrix, epsilon = 1e-15) {
+# Calcola l'errore di tipo CrossEntropy
+calculate_rowwise_error <- function(real_matrix, predicted_matrix) {
   real_matrix <- as.matrix(real_matrix)
   predicted_matrix <- as.matrix(predicted_matrix)
   errors <- -rowSums(real_matrix * log(predicted_matrix))
   return(errors)
 }
 
+# Funzione softmax
 softmax <- function(logits) {
   stable_logits <- logits - max(logits) # Stabilità numerica
   exp_logits <- exp(stable_logits)
@@ -494,24 +551,28 @@ for (i in 1:length(n.trees.seq)) {
 }
 
 
+best_n_trees <- n.trees.seq[which.min(error_matrix_test[1, ])]
+
 matplot(n.trees.seq, cbind(error_matrix_test[1, ], error_matrix_train[1, ]), pch=19 , col=c("#A20045","#00484D"),type="b",ylab="CrossEntropy",xlab="n. trees")
+abline(v = best_n_trees, col = "gray", lty = "dashed", lwd = 1)
+text(x = best_n_trees, y = mean(par("usr")[3:4]), labels = best_n_trees, pos = 4, col = "#A20045", cex = 0.9)
 legend("topright",legend=c("Test Error","Train Error"),pch=19, col=c("#A20045","#00484D"))
 
 ```
 
-
-
-
+Successivamente è stato addestrato un nuovo modello con parametri analoghi a quelli del primo, ad eccezione del numero di alberi, ridotto a 1000. Su questo secondo modello di boosting è stata utilizzata la funzione perf della libreria gbm, che consente di individuare graficamente il numero ottimale di alberi tramite validazione incrociata, minimizzando l'errore.
+Il risultato è un grafico simile a quello precedente, ma in questo caso viene evidenziato il punto corrispondente al numero ottimale di alberi. Tale valore, salvato nella variabile best.nt, è pari a 439 molto vicino a quanto osservato in precedenza utilizzando il dataset di test. Ricordiamo che il valore di 439 alberi è ottenuto attraverso la cross validation per tanto è meno affidabile di quello precedente basato sul dataset di test in quanto la suddivisione per la valutazione avviene sullo stesso dataset di train.
 ```{r, warning=FALSE}
 set.seed(123)
 boost.2 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 1000, interaction.depth = 4, shrinkage=0.1, cv.folds = 5)
 
-# Choose number of trees via xvalidation error
 best.nt = gbm.perf(boost.2, method = "cv", plot.it = TRUE)
 best.nt
 ```
 
-
+Successivamente è stata avviata una procedura di fine-tuning dei parametri, con l'obiettivo di individuare non solo il numero ottimale di alberi, ma anche il valore ideale del parametro depth. Utilizzando il codice mostrato, sono stati testati tutti i valori di depth compresi tra 1 e 7. Per ciascun valore, sono stati calcolati sia l'errore sul dataset di training e su quello di test, sia il numero ottimale di alberi tramite validazione incrociata.
+Il risultato è una matrice contenente tutte le combinazioni testate, con i relativi valori di errore e numero di alberi ottimale. Da questa matrice è stato possibile individuare la combinazione di parametri che minimizza l'errore sul dataset di test.
+In basso è riportata la tabella con i risultati ottenuti.
 ```{r, warning=FALSE}
 myd <- 1:7
 test_matrix_onehot <- model.matrix(~ test$Categorical_Exam_Score - 1)
@@ -521,7 +582,7 @@ myEval <- sapply(myd , function(x) {
   set.seed(123)
   boost.3 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 1000, interaction.depth = x, shrinkage=0.1, cv.folds = 5)
   
-  ### best n. trees
+  # Numero ottimale di alberi
   best.nt2 <- gbm.perf(boost.3, method = "cv", plot.it = FALSE) 
   
   
@@ -531,17 +592,16 @@ myEval <- sapply(myd , function(x) {
   Yhat_train <- predict(boost.3, n.trees = best.nt2)
   Yhat_train = t(apply(Yhat_train, 1, softmax))
   
-  ### MSE
+  ### Crossentropy
   loss_train = mean(calculate_rowwise_error(train_matrix_onehot, Yhat_train))
   loss_test = mean(calculate_rowwise_error(test_matrix_onehot, Yhat_test))
-  
   
   return(c(as.integer(best.nt2), round(loss_train,3), round(loss_test,3)))}
   )
 
 myEval
 ```
-
+Per una migliore visualizzazione dei risultati, sono stati realizzati due grafici. Il primo mostra come varia il numero ottimale di alberi determinato tramite validazione incrociata in funzione del parametro depth. Mentre il secondo mostra l'errore del modello calcolato sul train e test. In basso sono riportati i valori ottimali di depth e di numero di alberi che minimizzano l’errore. 
 ```{r, warning=FALSE}
 myEval_invertita <- t(myEval)
 
@@ -570,61 +630,71 @@ best_depth =  indice_minimo
 best_depth
 best_nt
 ```
+Si può osservare come il numero ottimale di alberi tenda a diminuire all'aumentare del parametro depth. Questo comportamento è probabilmente dovuto al fatto che valori elevati di depth aumentano la complessità del modello, rendendolo più soggetto a overfitting. Di conseguenza, un numero inferiore di alberi risulta sufficiente (e talvolta necessario) per contrastare questo effetto e mantenere la generalizzazione.
+Il secondo grafico mostra l'andamento dell'errore del modello al variare del parametro depth, distinguendo tra il dataset di test (curva blu) e quello di training (curva verde). Per ogni valore di depth, è stato utilizzato il corrispondente numero ottimale di alberi trovato in precedenza. Dal grafico emerge che l'errore sul dataset di test raggiunge il minimo per depth = 2, per poi aumentare, indicando un peggioramento della capacità di generalizzazione. Al contrario, come già osservato nei casi precedenti, la loss sul dataset di training decresce in modo monotono, suggerendo un crescente overfitting con l'aumentare della profondità.
+Tuttavia, è importante notare che mentre il depth è stato scelto in base alla minima loss sul dataset di test, il numero ottimale di alberi è stato determinato tramite validazione incrociata. Questo significa che i due valori ottimali non sono perfettamente coerenti tra loro, e il numero di alberi potrebbe non essere il migliore possibile in corrispondenza del depth ottimale.
+Per evitare di appesantire ulteriormente l'analisi e i tempi di calcolo, si è deciso di non ripetere la procedura di ottimizzazione del numero di alberi specificamente per il valore ottimale di depth. Una tale operazione avrebbe probabilmente portato a una stima più accurata, ma a fronte di una maggiore complessità computazionale.
+
+
+
+Utilizzando i parametri ottimali identificati in precedenza, è stato addestrato il modello finale di boosting, denominato boost.final.
 ```{r, warning=FALSE}
 set.seed(123)
 boost.final <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = best_nt, interaction.depth = best_depth, shrinkage=0.1, cv.folds = 5)
+```
 
+Da questo modello è stata ricavata la matrice di confusione sia sual dataset di train che di test, e sia altri parametrid i interesse statistico come l'accuracy, Specificity e la Balanced Accuracy. Dai risulatati possiamo osservare come il modella abbia un valore di accuracy molto più elevato sul dataset di train che su quello di test, anche se su quest ultimo raggiunge comunque un accuratezza di quasi l'80%, indicando una discreta capacità predittiva nonostante l'overfitting. Per quanto riguarda Specificity e la Balanced Accuracy queste risultano molto variabili fra le classi. Nel caso della classe quasi sufficiente i valori sembrano discreti mentre per la classe Altro queste assumono valore abbastanza bassi.
+
+Dal modello sono state estratte le matrici di confusione e calcolate le principali metriche: accuracy, specificity e balanced accuracy, sia sul training set sia sul test set. Vediamo alcune considerazioni:
+
+- Training set:
+  - Accuracy complessiva: 96,58%
+  - Balanced accuracy per classe: da 98,70% (Quasi‑Sufficiente) a 88,68% (Alto)
+  - Specificity molto elevate per tutte le classi (ad es. 99,94% per Quasi‑Sufficiente, 99,97% per Alto)
+
+- Test set:
+  - Accuracy complessiva: 79,92%
+  - Balanced accuracy per classe: varia da 82,31% (Quasi‑Sufficiente) a 67,66% (Alto)
+  - Specificity alta anche in test (ad es. 99,43% per Quasi‑Sufficiente, 98,81% per Alto)
+
+Nonostante si possa notare dell'overfitting sui dati di train, il modello mantiene quasi l’80% di accuratezza sui dati di test, confermando una discreta capacità predittiva. Tuttavia, le metriche di balanced accuracy e specificity mostrano una forte variabilità tra le classi:
+La classe Quasi‑Sufficiente presenta un'ottima balanced accuracy in training (98,70%), che scende a 82,31% in test, con specificity vicina al 99%.
+
+La classe Alto è invece la più critica: nonostante specificity elevata (98,81%), la sensibilità sui dati di test è solo 36,52%, portando la balanced accuracy al 67,66%.
+
+```{r, warning=FALSE}
 # Effettua le previsioni sul set di training
 predictions_train_probs <- predict(boost.final, newdata = train, n.trees = best_nt, type = "response")
 predictions_train <- apply(predictions_train_probs, 1, which.max)
 predicted_classes_train <- levels(train$Categorical_Exam_Score)[predictions_train]
-
-# Calcola l'accuracy sul set di training
-confusion_matrix_train <- confusionMatrix(factor(predicted_classes_train, levels = levels(train$Categorical_Exam_Score)), train$Categorical_Exam_Score)
-accuracy_train <- confusion_matrix_train$overall["Accuracy"]
-cat("Accuracy sul set di training:", accuracy_train, "\n")
 
 # Effettua le previsioni sul set di test
 predictions_test_probs <- predict(boost.final, newdata = test, n.trees = best_nt, type = "response")
 predictions_test <- apply(predictions_test_probs, 1, which.max)
 predicted_classes_test <- levels(test$Categorical_Exam_Score)[predictions_test]
 
-# Calcola l'accuracy sul set di test
-confusion_matrix_test <- confusionMatrix(factor(predicted_classes_test, levels = levels(test$Categorical_Exam_Score)), test$Categorical_Exam_Score)
-accuracy_test <- confusion_matrix_test$overall["Accuracy"]
-cat("Accuracy sul set di test:", accuracy_test, "\n")
-```
-
-```{r}
-train_labels_factor <- factor(train$Categorical_Exam_Score, levels = levels(factor(predicted_classes_train)))
-test_labels_factor <- factor(test$Categorical_Exam_Score, levels = levels(factor(predicted_classes_test)))
-
 # Confusion matrix sul set di training
-confusion_matrix_train <- confusionMatrix(factor(predicted_classes_train, levels = levels(train_labels_factor)), train_labels_factor)
+confusion_matrix_train <- confusionMatrix(factor(predicted_classes_train, levels = levels(train$Categorical_Exam_Score)), train$Categorical_Exam_Score)
 print("Confusion Matrix - Training Set:")
 print(confusion_matrix_train)
 
-# Confusion matrix sul set di test
-confusion_matrix_test <- confusionMatrix(factor(predicted_classes_test, levels = levels(test_labels_factor)), test_labels_factor)
+# Calcola l'accuracy sul set di test
+confusion_matrix_test <- confusionMatrix(factor(predicted_classes_test, levels = levels(test$Categorical_Exam_Score)), test$Categorical_Exam_Score)
 print("Confusion Matrix - Test Set:")
 print(confusion_matrix_test)
 ```
 
+Effettuando il summary del modello possiamo osservare l'importanza che il modello ha dato a ciascuna variabile utilizzata. Si può notare che rispetto a prima è crescita l'importanza delle variabili Attendance e Hours_Studied rispetto alla altre.
+Tenendo conto di queste considerazioni unite a quelle precedenti si può pensare che la difficoltà del modello nel determinare le classi sembra sia da attribuire ai pochi dati nelle classi più lontane dalla media e sia dalla dipendenza lineare che vige tra le variabili più importanti utilizzate dal modello e Exam_Score.
+
+Il summary del modello mette in luce l'importanza attribuita a ciascuna variabile: in particolare, Attendance e Hours_Studied hanno guadagnato peso rispetto alle altre feature e ai valori visti in precedenza.
+Alla luce di queste evidenze e dei risultati precedenti, si può ipotizzare che le maggiori difficoltà del modello nel classificare correttamente le classi “più estreme” dipendano da due fattori principali:
+- Scarsa rappresentatività dei dati per le categorie lontane dalla media, che rende il modello meno accurato nel riconoscerle.
+- Forte correlazione lineare tra le variabili più influenti (Attendance e Hours_Studied) e l’obiettivo (Exam_Score), elemento che può complicare l'apprendimento di pattern distintivi soprattutto nelle classi meno frequenti.
+
 ```{r}
 summary(boost.final)
 ```
-
-```{r}
-plot(boost.final$train.error, type = "l", xlab = "Numero di alberi", ylab = "Errore di training")
-lines(boost.final$cv.error, col = "red")
-legend("topright", legend = c("Training Error", "Cross-Validation Error"), col = c("black", "red"), lty = 1)
-```
-
-
-
-
-
-
 
 
 ## CART
