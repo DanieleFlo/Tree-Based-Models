@@ -1,5 +1,6 @@
 ---
-title: "Untitled"
+title: "Tree Based Models"
+author: "Roberto Cerminara, Daniele Florio, Lorenzo Piattoli"
 output: pdf_document
 date: "2025-04-17"
 ---
@@ -9,7 +10,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Introduzione
+In questa analisi ci proponiamo di esplorare i fattori che influenzano il rendimento degli studenti nell'esame finale, con l'obiettivo di individuare le variabili più rilevanti e costruire modelli predittivi capaci di classificare gli studenti in fasce di voto. Il dataset utilizzato contiene variabili sia numeriche (ad es. ore di studio settimanali, percentuale di frequenza, punteggi precedenti, numero di sessioni di tutoraggio) sia categoriali (ad es. livello di coinvolgimento genitoriale, accesso a risorse educative, motivazione, tipo di scuola, reddito familiare). Dopo un'importazione preliminare e la corretta codifica dei fattori, è stata condotta un'analisi descrittiva per comprendere la distribuzione dei punteggi d'esame e le correlazioni con le principali variabili numeriche.
 
+Per gestire il problema della previsione in termini di classi di voto piuttosto che di punteggio continuo, la variabile Exam_Score è stata trasformata in variabile categoriale: sono state create due versioni del dataset, una con sei classi e una con quattro classi, bilanciate attorno al punteggio medio e con fasce più ampie per le code della distribuzione. Lo scopo di questa divisione del dataset è quello di analizzare i limiti dei modelli in situazioni di classi fortemente sbilanciate. in virtù di queste considerazioni, sono stati testati diversi modelli: Random Forest (con e senza pesi di classe), tecniche di data augmentation (SMOTE), il singolo albero decisionale CART e algoritmi di Boosting. In ciascun caso, l'analisi si è concentrata su accuratezza complessiva, errori Out‑of‑Bag (OOB), metriche di classe (Balanced Accuracy, Specificity) e importanza delle variabili, al fine di valutare performance e robustezza dei modelli in presenza di sbilanciamento tra le classi.
 
 
 ### Librerie
@@ -19,6 +22,7 @@ library(ggcorrplot)
 library(scales)
 library(randomForest) 
 library(caret)
+library(rpart)
 library(dplyr)
 library(gbm)
 library(smotefamily)
@@ -26,7 +30,7 @@ library(smotefamily)
 
 
 # Import del dataset e analisi preliminare
-Attraverso il seguente codice è stato effettuato l'import del dataset scelto. Inoltre utilizzando la lista delle variabili categorieli è stato possibile convertirle in factor attraverso la funzione lapply. Vediamo in oltre un estratto del dataset in basso.
+Attraverso il seguente codice è stato effettuato l'import del dataset scelto. Inoltre utilizzando la lista delle variabili categoriali è stato possibile convertirle in factor attraverso la funzione lapply. Vediamo in oltre un estratto del dataset in basso.
 ```{r}
 ds <- read.csv("StudentPerformanceFactors.csv")
 ds = data.frame(ds)
@@ -45,7 +49,7 @@ head(ds)
 ```
 
 #### Descrizione delle variabili
-Prima di iniziale la trattazione è utili fare un breve riassunto su quello che sono le variabili presenti nel dataset e del loro significato.
+Prima di iniziare la trattazione è utile fare un breve riassunto su quelle che sono le variabili presenti nel dataset e del loro significato.
 *   **Hours_Studied**	Numero di ore spese studiando a settimana.
 *   **Attendance** Percentuale di lezioni frequentate.
 *   **Parental_Involvement** Livello di coinvolgimento genitoriale nella formazione dello studente (Low, Medium, High).
@@ -110,7 +114,7 @@ ggplot(ds, aes(x = Attendance, y = Exam_Score, color=Parental_Involvement)) +
   ) +
   theme_minimal()
 ```
-Analogamente a priama, è stata effettuata la analisi precedente ma questa volta sono state considerate le ore di studio settimanali (Hours_Studied). Anche in questo caso si nota una forte dipendenza lineare fra le due variabili con una distinzione in base Parental_Involvement.
+Analogamente a prima, è stata effettuata la analisi precedente ma questa volta sono state considerate le ore di studio settimanali (Hours_Studied). Anche in questo caso si nota una forte dipendenza lineare fra le due variabili con una distinzione in base Parental_Involvement.
 
 ```{r, warning=FALSE}
 ggplot(ds, aes(x = Hours_Studied, y = Exam_Score, color=Parental_Involvement)) +
@@ -127,7 +131,8 @@ ggplot(ds, aes(x = Hours_Studied, y = Exam_Score, color=Parental_Involvement)) +
 Di particolare interesse è anche la variabile Previous_Scores, che intuitivamente potrebbe sembrare quella più adatta per predire il valore di Exam_Score. Tuttavia, questa analisi mette in luce una notevole variabilità fra i dati, suggerendo che altre variabili potrebbero giocare un ruolo altrettanto rilevante nella previsione dei punteggi dell'esame finale.
 
 ```{r, warning=FALSE}
-ggplot(ds, aes(x = Previous_Scores, y = Exam_Score, color=Parental_Involvement)) +
+ggplot(ds, aes(x = Previous_Scores, y = Exam_Score, 
+               color=Parental_Involvement)) +
   geom_point() +
   geom_smooth(method = "lm", se = FALSE) +
   labs(
@@ -161,7 +166,8 @@ ds_2$Categorical_Exam_Score <- cut(
 ds$Categorical_Exam_Score <- cut(
   ds$Exam_Score,
   breaks = c(54, 61, 64, 67, 70, 73, 102),
-  labels = c("Quasi-Sufficiente", "Basso", "Medio-Basso", "Medio", "Medio-Alto", "Alto"),
+  labels = c("Quasi-Sufficiente", "Basso", "Medio-Basso", "Medio", 
+             "Medio-Alto", "Alto"),
   include.lowest = FALSE,
   right = TRUE
 )
@@ -192,7 +198,7 @@ ggplot(ds, aes(x = Categorical_Exam_Score,
   labs(
     x     = "Categoria punteggio d'esame",
     y     = "Percentuale di osservazioni",
-    title = "Distribuzione normalizzata di Categorical Exam Score"
+    title = "Distribuzione di Categorical Exam Score"
   ) +
   theme_minimal(base_size = 14)
 
@@ -222,7 +228,7 @@ ggplot(ds_2, aes(x = Categorical_Exam_Score,
   labs(
     x     = "Categoria punteggio d'esame",
     y     = "Percentuale di osservazioni",
-    title = "Distribuzione normalizzata di Categorical Exam Score"
+    title = "Distribuzione di Categorical Exam Score"
   ) +
   theme_minimal(base_size = 14)
 ```
@@ -260,7 +266,246 @@ test_2  <- ds_2[-trainIndex, ]
 
 # Analisi
 
-## Data aug
+## Random forest
+Le Random Forest si basano sulla costruzione di numerosi alberi decisionali generati tramite campionamento bootstrap. A differenza degli alberi classici, introducono il parametro mtry, che seleziona un sottoinsieme casuale delle $p$ variabili presenti nel dataset ad ogni split. Questo sottoinsieme viene utilizzato per individuare la variabile su cui effettuare la divisione, contribuendo a ridurre la correlazione tra gli alberi e migliorare la capacità di generalizzazione del modello. Solitamente nei problemi di classificazione si tende a costruire un numero di alberi pari a 10*$p$ e un numero di  variabili $mtry=sqrt(p)$.
+Procediamo quindi a fittate il modello usando questi parametri.
+
+```{r}
+mtry=sqrt(ncol(train))
+mtry
+B=200
+rf_1 <- randomForest(Categorical_Exam_Score ~ . , data = train, ntree=B, 
+                     mtry= mtry, method="class")
+rf_1
+
+```
+Dall’output della matrice di confusione si osserva come, nelle classi più sbilanciate, l’algoritmo — con le impostazioni adottate e considerando quattro variabili di split che cambiano da simulazione a simulazione — evidenzi una scarsa capacità di apprendere correttamente le caratteristiche delle classi sottorappresentate. Questo comportamento è tipico nei contesti in cui il dataset presenta un forte sbilanciamento tra le categorie, e può compromettere l’efficacia predittiva del modello per le classi meno frequenti.
+Per approfondire l’analisi, rappresentiamo l’andamento dell’errore OOB (Out-of-Bag) in funzione del numero di alberi. Tale errore misura la capacità dell’algoritmo di predire correttamente le osservazioni che non sono state utilizzate durante l’addestramento di ciascun albero, fornendo una stima realistica dell’errore di generalizzazione. Il grafico mostra sia l’errore OOB complessivo, sia quello calcolato separatamente per ciascuna classe, offrendo una panoramica dettagliata delle difficoltà che il modello incontra nelle diverse categorie.
+Infine, analizziamo la variable importance, un indicatore che misura il contributo di ciascuna variabile nella riduzione dell’impurità all’interno degli alberi. Questo strumento permette di individuare quali variabili risultano più informative nel processo di classificazione.
+```{r}
+  library(RColorBrewer)
+
+n_classi <- ncol(rf_1$err.rate)
+n_classi
+
+varImpPlot(rf_1, main="Variable importance", pch = 19, color="#A20045")
+
+# Colori: OOB in nero, classi con una palette armoniosa
+colori <- c("black", colorRampPalette(brewer.pal(8, "Set2"))(n_classi - 1))
+
+# Plot errori OOB
+plot(rf_1,
+     col = colori,
+     main = "Random Forest – Errori OOB per classe")
+
+# Aggiunta legenda
+legend("topright",
+       legend = colnames(rf_1$err.rate),
+   col = colori,
+       lty = 1,
+       cex = 0.8)
+```
+Un aspetto interessante emerso dall'analisi è che l’errore OOB complessivo, così come quello associato a diverse classi, tende a diminuire progressivamente all’aumentare del numero di alberi costruiti sui campioni bootstrap. Questo comportamento conferma l’efficacia dell’aggregazione nel ridurre la varianza del modello e migliorare la sua stabilità. Tuttavia, si nota che per le classi quasi sufficiente e alto, l’errore OOB rimane pressoché costante, suggerendo che il modello fatica a distinguere correttamente queste categorie. 
+
+Inoltre, viene rappresentata anche la variable importance: essa misura il contributo di ciascuna variabile nella riduzione dell’impurità (indice di Gini) durante la costruzione degli split. Le variabili più rilevanti risultano essere Hours_Studied, che indica il numero di ore dedicate allo studio settimanale, Attendance, che rappresenta la percentuale di lezioni frequentate, e Previous_Scores, ovvero il punteggio ottenuto negli esami precedenti. Questi fattori sembrano avere un peso decisivo nella classificazione degli studenti. Anche le ore di sonno forniscono un contributo, sebbene meno marcato.
+
+A questo punto dell’analisi, vogliamo studiare come cambia il comportamento del modello al variare del parametro mtry, che indica quante variabili vengono considerate a ogni split di ciascun albero. Per farlo, confronteremo l’errore OOB e l’errore sul test set per diversi valori di mtry. Per rendere le stime più stabili, decidiamo inoltre di aumentare il numero di alberi a 1000.
+
+```{r}
+set.seed(112)
+
+B <- 1000
+oob.err <- c()
+test.err <- c()
+p <- NCOL(ds) - 1
+for(mtry in 1:p){
+  rf <- randomForest(Categorical_Exam_Score ~ . , data = train , mtry=mtry, 
+                     ntree=B)
+  oob.err[mtry] <- rf$err.rate[B, "OOB"]
+  pred=predict(rf, newdata = test)
+  test.err[mtry] <- mean(pred != test$Categorical_Exam_Score)
+}
+
+matplot(1:mtry , cbind(oob.err,test.err), pch=19 , 
+        col=c("#A20045","#00484D"),type="b",ylab="CE",xlab="mtry")
+legend("topright",legend=c("Out of Bag Error","Test Error"),pch=19, 
+       col=c("#A20045","#00484D"), cex = 0.7)
+```
+Il grafico riportato sopra fornisce informazioni preziose sull'andamento dell'errore OOB al variare del parametro mtry. Si osserva che, all'aumentare di mtry, l'errore OOB tende a diminuire rispetto all’errore calcolato sul test set.
+La scelta del parametro mtry è molto importante: un valore troppo elevato di mtry, infatti, può portare gli alberi ad essere troppo simili tra loro, con il rischio di adattarsi eccessivamente ai dati di training. Al contrario, valori troppo bassi di mtry riducono la correlazione tra gli alberi, il che è positivo in termini di generalizzazione, ma può diventare problematico quando nel dataset sono presenti molte variabili irrilevanti. In questi casi, selezionare un numero troppo basso di predittori rischia di far scegliere, durante gli split, variabili non informative, peggiorando la qualità dell'albero.
+Per affrontare questo trade-off e individuare il valore ottimale di mtry, abbiamo effettuato un tuning del parametro sul training set utilizzando la funzione tuneRF, che consente di testare diversi valori e selezionare quello che minimizza l'errore OOB.
+```{r}
+set.seed(112)
+
+my.mtry <- tuneRF(train[,-20],train$Categorical_Exam_Score, ntreeTry=1000,
+                  stepFactor=1.5,improve=0.001, trace=TRUE, plot=TRUE)
+
+
+```
+
+
+```{r}
+set.seed(112)
+best_mtry <- my.mtry[which.min(my.mtry[, 2]),1]
+best_mtry
+mtry=6
+rf_1_o <- randomForest(Categorical_Exam_Score ~ . , data = train, 
+                       ntree=1000, mtry= mtry)
+rf_1_o
+
+
+n_classi <- ncol(rf_1_o$err.rate)
+
+colori <- c("black", brewer.pal(n_classi - 1, "Dark2"))  # palette per 6 classi
+
+plot(rf_1_o,
+     col = colori,
+     main = "Random Forest – Errore OOB per classe",
+     lwd = 2)
+
+legend("topright",
+       legend = colnames(rf_1_o$err.rate),
+       col = colori,
+       lty = 1,
+       cex = 0.8)
+
+```
+La situazione non mostra miglioramenti significativi: l'errore OOB complessivo e quello di ciascuna classe, rimane pressoché invariato e l'algoritmo continua a mostrare difficoltà nel classificare correttamente le categorie meno rappresentate, in particolare alto e quasi sufficiente, anche se quest'ultimo ha un OOB error più basso. 
+
+Per valutare in modo più completo le prestazioni del modello, procediamo ora a confrontare le predizioni ottenute sui dati di test con i valori osservati, calcolando così l'accuratezza su dati mai visti in fase di addestramento.
+
+```{r}
+rf_1p= predict(rf_1_o, newdata = test)
+table(rf_1p)
+actuals <- test$Categorical_Exam_Score
+confusion_matrix <- table(Predicted = rf_1p, Actual = actuals)
+print(confusion_matrix)
+conf_df <- as.data.frame(confusion_matrix)
+ggplot(conf_df, aes(x = Actual, y = Predicted)) +
+  geom_tile(aes(fill = Freq), color = "white") +
+  geom_text(aes(label = Freq), vjust = 0.5) +
+  scale_fill_gradient(low = "white", high = "#A20045") +
+  scale_y_discrete(limits = rev) + 
+  theme_minimal() +
+  labs(title = "Matrice di Confusione - Test set") +
+  coord_fixed() 
+
+accuratezza_classe <- diag(prop.table(confusion_matrix, 2))
+barplot(accuratezza_classe, 
+        main = "Accuratezza per classe (Test set)", 
+        col = "darkgreen", 
+        ylab = "Accuratezza", 
+        ylim = c(0, 1))
+
+```
+
+Dall'analisi dei risultati sul test set emerge che il modello riesce a classificare correttamente le classi basso, medio-basso, medio e medio-alto, confermando quanto osservato anche sul training. Tuttavia, come già evidenziato nelle osservazioni precedenti, lo squilibrio tra le classi continua a penalizzare le categorie meno frequenti: quasi sufficiente e alto risultano ancora le più difficili da predire, con una bassa accuratezza anche sul test set.
+
+
+
+
+
+### Weighted Class: 
+Dopo aver osservato le difficoltà del modello nel classificare correttamente le classi meno rappresentate — e constatato che né l’aumento del numero di alberi né l’ottimizzazione del parametro mtry sono riusciti a risolvere il problema — abbiamo deciso di pesare ciascuna classe, attribuendo un maggior peso alle classi con meno osservazioni.
+In termini pratici, i pesi sono stati calcolati come l’inverso della frequenza assoluta di ciascuna classe. Tali valori sono stati poi normalizzati dividendo per la somma complessiva dei pesi grezzi e moltiplicati per il numero totale delle classi. Questo approccio assegna un peso maggiore alle classi più rare, con l’obiettivo di aumentare la probabilità che il modello le riconosca correttamente, senza che vengano “schiacciate” dalle classi predominanti. Dal punto di vista teorico, l’introduzione dei pesi ha un impatto diretto sul criterio di splitting adottato negli alberi. Di conseguenza, il modello è incentivato a costruire partizioni che favoriscano anche le classi meno rappresentate.
+
+
+
+```{r}
+#modifico l'influenza di ogni classe sul modello in modo inversamente proporzionale alla sua frequenza nel dataset.
+class_weights= 1/table(train$Categorical_Exam_Score)
+#costruisco i pesi omega(i)*numero di classi/sum(omega(i))
+class_weights_1 <- class_weights / sum(class_weights) * length(class_weights)
+```
+
+
+
+```{r}
+set.seed(112)
+rf_weighted <- randomForest(Categorical_Exam_Score~ ., 
+                            data = train,
+                            mtry=6,
+                            ntree=1000,
+                            importance = FALSE,
+                            classwt = class_weights_1) 
+rf_weighted
+n_classi <- ncol(rf_weighted$err.rate)
+
+
+# Colori: OOB in nero, classi con una palette armoniosa
+colori <- c("black", RColorBrewer::brewer.pal(n_classi - 1, "Set2"))
+
+# Plot OOB error per classe
+plot(rf_weighted,
+     col = colori,
+     main = "Random Forest – Errori OOB per classe")
+
+# Legenda
+legend("topright",
+       legend = colnames(rf_weighted$err.rate),
+       col = colori,
+       lty = 1,
+       cex = 0.7)
+varImpPlot(rf_weighted, main="Variable importance", pch = 19, color="#A20045")
+
+```
+Dal grafico è possibile osservare che l'errore associato alle classi più sbilanciate si mantiene pressoché costante anche con l'aumentare del numero di alberi, segnalando che il modello continua ad avere difficoltà nel gestire queste categorie. 
+Riproviamo a fare un tuning del parametro mtry per vedere se il modello ci dà un parametro ottimale diverso che riduca di più l'OOB error e l'errore sul test sample.
+```{r}
+set.seed(112)
+
+B <- 1000
+oob.err_w <- c()
+test.err_w <- c()
+p <- NCOL(train) - 1
+for(mtry in 1:p){
+  rf <- randomForest(Categorical_Exam_Score ~ . , data = train , 
+                     mtry=mtry, ntree=B)
+  oob.err_w[mtry] <- rf_weighted$err.rate[B, "OOB"]
+  pred_w=predict(rf_weighted, newdata = test)
+  test.err_w[mtry] <- mean(pred_w != test$Categorical_Exam_Score)
+}
+
+matplot(1:mtry , cbind(oob.err_w,test.err_w), pch=19 , 
+        col=c("#A20045","#00484D"),type="b",ylab="CE",xlab="mtry")
+legend("topright",legend=c("Out of Bag Error","Test Error"),pch=19, 
+       col=c("#A20045","#00484D"), cex = 0.7)
+```
+Dal grafico si vede una stabilizzazione dell'OOB error, che si mantiene costante al variare del parametro mtry, dopo aver ripesato le classi; mentre il test error mostra delle piccole oscillazioni.
+
+```{r}
+best_mtry <- my.mtry[which.min(my.mtry[, 2]),1]
+best_mtry
+my.mtry <- tuneRF(train[,-20],train$Categorical_Exam_Score, ntreeTry=1000,
+                  stepFactor=1.5,improve=0.001, trace=TRUE, plot=TRUE)
+```
+Per comprendere se l'introduzione di una redistribuzione dei pesi abbia effettivamente migliorato la capacità predittiva, vediamo come si comporta il modello con i dati di test.
+```{r}
+actuals <- test$Categorical_Exam_Score
+rf_wp= predict(rf_weighted, newdata = test )
+confusion_matrix_w <- table(Predicted = rf_wp, Actual = actuals)
+print(confusion_matrix_w)
+conf_df2 <- as.data.frame(confusion_matrix_w)
+ggplot(conf_df2, aes(x = Actual, y = Predicted)) +
+  geom_tile(aes(fill = Freq), color = "white") +
+  geom_text(aes(label = Freq), vjust = 0.3) +
+  scale_fill_gradient(low = "white", high = "#A20045") +
+  scale_y_discrete(limits = rev) +
+  theme_minimal() +
+  labs(title = "Matrice di Confusione - Test set") +
+  coord_fixed() # Opzionale: mantiene le celle quadrate
+accuratezza_classe2<- diag(prop.table(confusion_matrix_w, 2))
+barplot(accuratezza_classe2, 
+        main = "Accuratezza per classe (Test set)", 
+        col = "darkgreen", 
+        ylab = "Accuratezza", 
+        ylim = c(0, 1))
+
+```
+Purtroppo, dall'analisi del grafico emerge che non si riscontra un miglioramento significativo nella classificazione delle classi minoritarie, nonostante l'introduzione dei pesi. Questo suggerisce che il semplice ribilanciamento dei pesi, pur utile, non è sufficiente da solo a risolvere le difficoltà legate allo sbilanciamento del dataset.
+
+
+## Data augmentation
 
 In questo paragrafo ci siamo concentrati sul sottoinsieme di addestramento (train), dove sono presenti le categorie con il maggior numero di osservazioni, con l'obiettivo di incrementare le classi meno rappresentate. A tal fine, abbiamo sfruttato la libreria smotefamily, che mette a disposizione la funzione SMOTE. Lo scopo di questa procedura è verificare se, bilanciando le classi tramite algoritmi di over‑sampling, è possibile migliorare le prestazioni predittive dei nostri modelli
 
@@ -273,7 +518,8 @@ rare_classes <- c("Quasi-Sufficiente", "Alto")
 
 apply_smote_to_class <- function(data, class_target, rate = 2) {
   # Crea etichetta binaria
-  data$binary_target <- ifelse(data$Categorical_Exam_Score == class_target, 1, 0)
+  data$binary_target <- ifelse(data$Categorical_Exam_Score == class_target, 
+                               1, 0)
   
   # SMOTE lavora solo su variabili numeriche → isoliamo features numeriche
   x_vars <- data %>% select(where(is.numeric))
@@ -294,7 +540,7 @@ apply_smote_to_class <- function(data, class_target, rate = 2) {
 
 # Applichiamo SMOTE a ciascuna classe rara
 synthetics <- lapply(rare_classes, function(cl) {
-  apply_smote_to_class(train, class_target = cl, rate = 2)  # dup_size controlla quanto ne vuoi
+  apply_smote_to_class(train, class_target = cl, rate = 2)
 })
 
 # Combiniamo i sintetici
@@ -305,7 +551,9 @@ train_augmented <- bind_rows(train, synthetic_data)
 train_augmented$binary_target = NULL
 
 
-train_augmented$Categorical_Exam_Score = as.factor(train_augmented$Categorical_Exam_Score)
+train_augmented$Categorical_Exam_Score = as.factor(
+  train_augmented$Categorical_Exam_Score
+  )
 
 # Controlla la nuova distribuzione
 table(train_augmented$Categorical_Exam_Score)
@@ -315,7 +563,8 @@ Poiché la funzione SMOTE calcola nuovi valori solo per le variabili numeriche, 
 ```{r}
 impute_categorical_na_by_class_mode <- function(data, class_col, rare_classes) {
   # Identifica colonne categoriali (escluse quelle già numeriche o il target)
-  categorical_cols <- data %>% select(where(~is.factor(.) || is.character(.))) %>% select(-all_of(class_col)) %>% colnames()
+  categorical_cols <- data %>% select(where(~is.factor(.) || is.character(.))) %>%
+    select(-all_of(class_col)) %>% colnames()
   
   for (cat_col in categorical_cols) {
     for (rare_class in rare_classes) {
@@ -398,18 +647,146 @@ ggplot(train_augmented, aes(x = Categorical_Exam_Score,
   labs(
     x     = "Categoria punteggio d'esame",
     y     = "Percentuale di osservazioni",
-    title = "Distribuzione normalizzata di Categorical Exam Score"
+    title = "Distribuzione di Categorical Exam Score"
   ) +
   theme_minimal(base_size = 14)
+```
+
+## CART:
+Dopo aver valutato modelli complessi come la Random Forest, anche con l'introduzione di pesi per il bilanciamento delle classi, si è deciso di analizzare un modello più semplice ma interpretabile: il CART (Classification and Regression Tree).
+Il modello CART si basa sulla costruzione di un singolo albero decisionale, ed è particolarmente utile in fase di interpretazione grazie alla sua struttura visiva. A differenza della Random Forest, che è un ensemble di molti alberi, il CART consente di comprendere in modo diretto quali variabili guidano le decisioni del modello e come vengono effettuati gli split.
+In questo contesto, il CART viene introdotto non come alternativa in termini di accuratezza, ma come strumento complementare.
+
+```{r}
+mod0 <- rpart(Categorical_Exam_Score ~ ., data = train, method = "class")
+
+# Visualizzazione dell’albero
+rpart.plot::rpart.plot(mod0,main = "CART")
+
+```
+
+```{r}
+# Predizione sul training set
+pred_mod0 <- predict(mod0, type = "class", newdata = test)
+summary(pred_mod0)
+# Confusion matrix
+conf_base <- table(predicted = pred_mod0, actual = test$Categorical_Exam_Score)
+# Valutazione
+caret::confusionMatrix(conf_base)
+```
+La matrice di confusione ottenuta dal modello CART mostra evidenti difficoltà nel riconoscere correttamente le classi meno rappresentate. In particolare, la classe “alto” non viene mai predetta, mentre “quasi sufficiente” e “basso” sono frequentemente confuse. Il modello tende a collassare verso le classi più numerose, come “medio” e “medio-basso”, segno che la struttura ad albero fatica a modellare le sottili differenze tra categorie. Questi limiti confermano la sensibilità del CART allo sbilanciamento delle classi e motivano l’uso di modelli più robusti, come la Random Forest, potenzialmente integrati con pesi di classe.
+
+
+```{r}
+conf_df3 <- as.data.frame(conf_base) %>%
+  mutate(is_correct = predicted == actual)
+ggplot(conf_df3, aes(x = actual, y = predicted)) +
+  geom_tile(aes(fill = Freq), color = "white") +
+  geom_text(aes(label = Freq), vjust = 0.3) +
+  scale_fill_gradient(low = "white", high = "#A20045") +
+  scale_y_discrete(limits = rev) +
+  theme_minimal() +
+  labs(title = "Matrice di Confusione - Test set") +
+  coord_fixed() # Opzionale: mantiene le celle quadrate
 ```
 
 
 
 
-## Random Forest
 
-AUg
 
+## Pre-processing output:
+Tra le tecniche di data-augmentation, abbiamo provato anche a raggruppare le classi in modo da ridimensionare la variabilità fra di esse. L'idea è quella di fare delle comparazioni in termini di performance, in quanto, con classi meno separate ci si aspetterebbe una migliore capacità predittiva del modello a causa di un miglior bilanciamento fra le classi. Questo dovrebbe aiutare il modello stesso a classificare e a riconoscere  più facilmente le unità statistiche.
+Per avere una comparazione corretta dei risultati rieseguiamo le procedure discusse fin ora utilizzando il dataset 2 precedentemente generato.
+
+```{r}
+
+
+
+# Fit del modello
+mtry <- 6
+rf_2 <- randomForest(Categorical_Exam_Score ~ ., 
+                     data = train_2, 
+                     ntree = 1000, 
+                     mtry = mtry)
+rf_2
+
+# Verifica: 5 colonne nell'err.rate (4 classi + OOB)
+colnames(rf_2$err.rate)
+# [1] "OOB" "Sufficiente" "Basso" "Medio" "Alto"
+
+# Palette: nero per OOB, colori pastello per le classi
+colori <- c("black", brewer.pal(4, "Set2"))
+
+# Plot
+plot(rf_2, 
+     col = colori,
+     lwd = 2,
+     main = "Random Forest – Errore OOB per classe e totale (mtry = 6)")
+
+# Legenda
+legend("topright", 
+       legend = colnames(rf_2$err.rate),
+       col = colori, 
+       lty = 1, 
+       cex = 0.8)
+
+
+```
+Dai risultati ottenuti si osserva una chiara riduzione dell'errore OOB dopo il raggruppamento delle classi. Una conseguenza rilevante di questa aggregazione è che il numero di simulazioni (ovvero di alberi) necessario per stabilizzare l'errore OOB si è ridotto rispetto alla configurazione iniziale, pur mantenendo invariato il valore del parametro mtry.
+Sebbene il bilanciamento delle classi sia stato ottenuto attraverso la ricodifica dei punteggi, permane una maggiore difficoltà del modello nel classificare correttamente la classe “alto”, che anche dopo il raggruppamento resta la meno rappresentata. Il suo tasso di errore di classificazione si conferma infatti il più elevato tra tutte le categorie.
+Infine, confrontando la matrice di confusione e i livelli di accuratezza per classe sul test set, emerge un miglioramento netto della performance complessiva: l'accuratezza del modello risulta aumentata. Questo dimostra come una corretta aggregazione delle categorie possa contribuire a semplificare il compito di classificazione e migliorare la capacità predittiva dell'algoritmo.
+
+
+```{r}
+# Predizione sul test set
+rf_2p <- predict(rf_2, newdata = test_2)
+
+# Tabella di frequenza predetta
+table(rf_2p)
+
+
+
+# Confusion matrix (Predetto vs Osservato)
+tab2 <- table(Predicted = rf_2p, Actual = test_2$Categorical_Exam_Score)
+
+# Errore per classe (1 - accuracy per colonna)
+err_by_class2 <- 1 - diag(prop.table(tab2, 2))
+
+# Grafico barre errore per classe
+barplot(err_by_class2, 
+        col = rainbow(length(err_by_class2)),
+        main = "Errore per classe sul test set",
+        ylab = "Errore",
+        ylim = c(0, 1))
+accuratezza_classe2 <- diag(prop.table(tab2, 2))
+barplot(accuratezza_classe2, 
+        main = "Accuratezza per classe (Test set)", 
+        col = "darkgreen", 
+        ylab = "Accuratezza", 
+        ylim = c(0, 1))
+
+# Heatmap della confusion matrix
+conf_df2=as.data.frame(tab2)
+conf_df2 <- conf_df2 %>%
+  mutate(is_correct = Predicted == Actual)
+
+# Heatmap migliorata
+ggplot(conf_df2, aes(x = Actual, y = Predicted)) +
+  geom_tile(aes(fill = Freq), color = "white") +
+  geom_text(aes(label = Freq), vjust = 0.5) +
+  scale_fill_gradient(low = "white", high = "#A20045") +
+  scale_y_discrete(limits = rev) +
+  theme_minimal() +
+  labs(title = "Matrice di Confusione - Test set") +
+  coord_fixed()
+
+```
+
+
+## Random Forest sul dataset augmented
+
+Di seguito presentiamo i risultati ottenuti fittando un algoritmo di random forest sul dataset augmented:
 ```{r}
 
 p <- NCOL(train_augmented) - 1
@@ -421,60 +798,60 @@ rf_1_aug <- randomForest(Categorical_Exam_Score ~ . , data = train_augmented)
 plot(rf_1_aug, col="#A20045", main="Random forest")
 varImpPlot(rf_1_aug, main="Variable importance", pch = 19, color="#A20045")
 ```
-
+Come ci potevamo aspettare nel coso delle prediizoni sul dataset di train, il modello sembra migliorato.
 ```{r}
 pred = predict(rf_1_aug)
 confusionMatrix(pred, train_augmented$Categorical_Exam_Score)
 ```
 
+Dalla matrice di confusione e dal barplot dell'accuratezza emerge chiaramente che il modello addestrato sui dati aumentati non solo non migliora le prestazioni sul test set, ma mostra addirittura un peggioramento rispetto ai modelli analoghi esaminati in precedenza, segnalando una ridotta capacità di generalizzazione.
+
 ```{r}
-pred_test_aug = predict(rf_1_aug, newdata = test)
-pred_test_aug <- factor(pred_test_aug, levels = levels(test$Categorical_Exam_Score))
-confusionMatrix(pred_test_aug, test$Categorical_Exam_Score)
+rf_preds <- predict(rf_1_aug, newdata = test)
+rf_preds <- factor(rf_preds,
+                   levels = levels(test$Categorical_Exam_Score))
+
+cm_caret <- confusionMatrix(rf_preds, test$Categorical_Exam_Score)
+print(cm_caret)
+
+conf_mat <- table(Predicted = rf_preds, Actual = test$Categorical_Exam_Score)
+conf_df  <- as.data.frame(conf_mat)
+
+conf_df <- conf_df %>%
+  mutate(
+    Actual    = factor(Actual,    levels = levels(test$Categorical_Exam_Score)),
+    Predicted = factor(Predicted, levels = levels(test$Categorical_Exam_Score))
+  )
+
+
+ggplot(conf_df, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), vjust = 0.5) +
+  scale_fill_gradient(low = "white", high = "#A20045") +
+  scale_x_discrete(limits = levels(test$Categorical_Exam_Score)) +
+  scale_y_discrete(limits = rev(levels(test$Categorical_Exam_Score))) +
+  theme_minimal() +
+  labs(title = "Matrice di Confusione – Test set") +
+  coord_fixed()
+
+accuratezza_classe <- diag(prop.table(conf_mat, 2))
+accuratezza_classe <- accuratezza_classe[levels(test$Categorical_Exam_Score)]
+
+barplot(
+  accuratezza_classe,
+  names.arg = levels(test$Categorical_Exam_Score),
+  main     = "Accuratezza per classe (Test set)",
+  ylab     = "Accuratezza",
+  ylim     = c(0, 1),
+  col      = "darkgreen"
+)
 ```
 
- NON aug
-
-```{r}
-set.seed(11)
-rf_1 <- randomForest(Categorical_Exam_Score ~ . , data = train)
-plot(rf_1, col="#A20045", main="Random forest")
-varImpPlot(rf_1, main="Variable importance", pch = 19, color="#A20045")
-```
-
-```{r}
-pred = predict(rf_1)
-confusionMatrix(pred, train$Categorical_Exam_Score)
-```
-
-```{r}
-pred_test = predict(rf_1, newdata = test)
-confusionMatrix(pred_test, test$Categorical_Exam_Score)
-```
-
-```{r}
-set.seed(11)
  
-rf_2 <- randomForest(Categorical_Exam_Score ~ . , data = train_2)
-plot(rf_2, col="#A20045", main="Random forest")
-varImpPlot(rf_2, main="Variable importance", pch = 19, color="#A20045")
-```
-
-```{r}
-set.seed(11)
-pred_2 = predict(rf_2)
-confusionMatrix(pred_2, train_2$Categorical_Exam_Score)
-```
-
-```{r}
-set.seed(11)
-pred_test_2 = predict(rf_2, newdata = test_2)
-confusionMatrix(pred_test_2, test_2$Categorical_Exam_Score)
-```
 
 ## Boosting
-Vediamo ora come si comprta l'algoritmo di Boosting sul dateaset 1 contenente 6 classi. Si è deciso di testare solamente questo algorimo sul dataset con più classi quindi con una maggiore difficolta nella capacità di previsione in quanto ci si aspetta che questo sia più performante e che quindi possa darci molte più inforazione nella capacità di previsione con una maggior numero di classi da prevedere. Inizialmente si è proceduti con un modello base con 2000 alberi, con massiamo 4 rami per albero e un learning rate indicato dalla variabile di shrinkage paria a 0.1. Il parametro di shrinkage non è stato cambiato per tutta la trattazione in quanto 0.1 rappresenta il valore massiamo da cui partire e già da questo l'algoritmo inpiega molto tempo per essere eseguito, percui effettuare un fine tuning risulterebbe troppo difficoltoso. 
-Effettuando il summary del modello possiamo osservare sia la tabella con i valori di importanza relativi a ogni variabile sia un grafico a barre ottenuro da esse. Come visto anche per il modello precedente al primo posso possiamo trovare la variabile Attendance, e a seguire il numero di ore studiate.
+Vediamo ora come si comporta l'algoritmo di Boosting sul dateaset 1 contenente 6 classi. Si è deciso di testare solamente questo algoritmo sul dataset con più classi quindi con una maggiore difficoltà nella capacità di previsione in quanto ci si aspetta che questo sia più performante e che quindi possa darci molte più informazione nella capacità di previsione con una maggior numero di classi da prevedere. Inizialmente si è proceduti con un modello base con 2000 alberi, con massimo 4 rami per albero e un learning rate indicato dalla variabile di shrinkage paria a 0.1. Il parametro di shrinkage non è stato cambiato per tutta la trattazione in quanto 0.1 rappresenta il valore massimo da cui partire e già da questo l'algoritmo impiega molto tempo per essere eseguito, per cui effettuare un fine tuning risulterebbe troppo difficoltoso. 
+Effettuando il summary del modello possiamo osservare sia la tabella con i valori di importanza relativi a ogni variabile sia un grafico a barre ottenuto da esse. Come visto anche per il modello precedente al primo posso possiamo trovare la variabile Attendance, e a seguire il numero di ore studiate.
 ```{r, warning=FALSE}
 set.seed(123)
 
@@ -537,14 +914,16 @@ for (i in 1:length(n.trees.seq)) {
   current_logits_test <- Yhat_logits_array_test[,,i]
   current_probs_test <- t(apply(current_logits_test, 1, softmax))
   
-  rowwise_errors_test <- calculate_rowwise_error(test_matrix_onehot, current_probs_test)
+  rowwise_errors_test <- calculate_rowwise_error(test_matrix_onehot, 
+                                                 current_probs_test)
   mean_error_test <- mean(rowwise_errors_test)
   error_matrix_test[1, i] <- mean_error_test
   
   current_logits_train <- Yhat_logits_array_train[,,i]
   current_probs_train <- t(apply(current_logits_train, 1, softmax))
   
-  rowwise_errors_train <- calculate_rowwise_error(train_matrix_onehot, current_probs_train)
+  rowwise_errors_train <- calculate_rowwise_error(train_matrix_onehot, 
+                                                  current_probs_train)
   mean_error_train <- mean(rowwise_errors_train)
   error_matrix_train[1, i] <- mean_error_train
 
@@ -553,10 +932,14 @@ for (i in 1:length(n.trees.seq)) {
 
 best_n_trees <- n.trees.seq[which.min(error_matrix_test[1, ])]
 
-matplot(n.trees.seq, cbind(error_matrix_test[1, ], error_matrix_train[1, ]), pch=19 , col=c("#A20045","#00484D"),type="b",ylab="CrossEntropy",xlab="n. trees")
+matplot(n.trees.seq, cbind(error_matrix_test[1, ], error_matrix_train[1, ]), 
+        pch=19 , col=c("#A20045","#00484D"),
+        type="b",ylab="CrossEntropy",xlab="n. trees")
 abline(v = best_n_trees, col = "gray", lty = "dashed", lwd = 1)
-text(x = best_n_trees, y = mean(par("usr")[3:4]), labels = best_n_trees, pos = 4, col = "#A20045", cex = 0.9)
-legend("topright",legend=c("Test Error","Train Error"),pch=19, col=c("#A20045","#00484D"))
+text(x = best_n_trees, y = mean(par("usr")[3:4]), labels = best_n_trees, 
+     pos = 4, col = "#A20045", cex = 0.9)
+legend("topright",legend=c("Test Error","Train Error"),pch=19, 
+       col=c("#A20045","#00484D"))
 
 ```
 
@@ -564,7 +947,9 @@ Successivamente è stato addestrato un nuovo modello con parametri analoghi a qu
 Il risultato è un grafico simile a quello precedente, ma in questo caso viene evidenziato il punto corrispondente al numero ottimale di alberi. Tale valore, salvato nella variabile best.nt, è pari a 439 molto vicino a quanto osservato in precedenza utilizzando il dataset di test. Ricordiamo che il valore di 439 alberi è ottenuto attraverso la cross validation per tanto è meno affidabile di quello precedente basato sul dataset di test in quanto la suddivisione per la valutazione avviene sullo stesso dataset di train.
 ```{r, warning=FALSE}
 set.seed(123)
-boost.2 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 1000, interaction.depth = 4, shrinkage=0.1, cv.folds = 5)
+boost.2 <- gbm(Categorical_Exam_Score ~ ., data = train, 
+               distribution = "multinomial", n.trees = 1000, 
+               interaction.depth = 4, shrinkage=0.1, cv.folds = 5)
 
 best.nt = gbm.perf(boost.2, method = "cv", plot.it = TRUE)
 best.nt
@@ -580,7 +965,9 @@ train_matrix_onehot <- model.matrix(~ train$Categorical_Exam_Score - 1)
 
 myEval <- sapply(myd , function(x) {
   set.seed(123)
-  boost.3 <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = 1000, interaction.depth = x, shrinkage=0.1, cv.folds = 5)
+  boost.3 <- gbm(Categorical_Exam_Score ~ ., data = train, 
+                 distribution = "multinomial", n.trees = 1000, 
+                 interaction.depth = x, shrinkage=0.1, cv.folds = 5)
   
   # Numero ottimale di alberi
   best.nt2 <- gbm.perf(boost.3, method = "cv", plot.it = FALSE) 
@@ -615,7 +1002,7 @@ plot(1:7, myEval_invertita[,1], type = "b", pch = 19, col = "red",
 plot(1:7, myEval_invertita[,2], type = "b", pch = 19, col = "green", 
      xlab = "depth", ylab = "CrossEntropy", 
      main = "Andamento della CrossEntropy sul train e test", 
-     ylim = range(c(myEval_invertita[,2], myEval_invertita[,3])))  # Impostare limiti y
+     ylim = range(c(myEval_invertita[,2], myEval_invertita[,3])))
 lines(1:7, myEval_invertita[,3], type = "b", pch = 19, col = "blue", lwd = 2)
 
 # Legenda
@@ -640,10 +1027,12 @@ Per evitare di appesantire ulteriormente l'analisi e i tempi di calcolo, si è d
 Utilizzando i parametri ottimali identificati in precedenza, è stato addestrato il modello finale di boosting, denominato boost.final.
 ```{r, warning=FALSE}
 set.seed(123)
-boost.final <- gbm(Categorical_Exam_Score ~ ., data = train, distribution = "multinomial", n.trees = best_nt, interaction.depth = best_depth, shrinkage=0.1, cv.folds = 5)
+boost.final <- gbm(Categorical_Exam_Score ~ ., data = train, 
+                   distribution = "multinomial", n.trees = best_nt, 
+                   interaction.depth = best_depth, shrinkage=0.1, cv.folds = 5)
 ```
 
-Da questo modello è stata ricavata la matrice di confusione sia sual dataset di train che di test, e sia altri parametrid i interesse statistico come l'accuracy, Specificity e la Balanced Accuracy. Dai risulatati possiamo osservare come il modella abbia un valore di accuracy molto più elevato sul dataset di train che su quello di test, anche se su quest ultimo raggiunge comunque un accuratezza di quasi l'80%, indicando una discreta capacità predittiva nonostante l'overfitting. Per quanto riguarda Specificity e la Balanced Accuracy queste risultano molto variabili fra le classi. Nel caso della classe quasi sufficiente i valori sembrano discreti mentre per la classe Altro queste assumono valore abbastanza bassi.
+Da questo modello è stata ricavata la matrice di confusione sia sul dataset di train che di test, e sia altri parametri di interesse statistico come l'accuracy, Specificity e la Balanced Accuracy. Dai risulatati possiamo osservare come il modella abbia un valore di accuracy molto più elevato sul dataset di train che su quello di test, anche se su quest ultimo raggiunge comunque un accuratezza di quasi l'80%, indicando una discreta capacità predittiva nonostante l'overfitting. Per quanto riguarda Specificity e la Balanced Accuracy queste risultano molto variabili fra le classi. Nel caso della classe quasi sufficiente i valori sembrano discreti mentre per la classe Altro queste assumono valore abbastanza bassi.
 
 Dal modello sono state estratte le matrici di confusione e calcolate le principali metriche: accuracy, specificity e balanced accuracy, sia sul training set sia sul test set. Vediamo alcune considerazioni:
 
@@ -664,22 +1053,29 @@ La classe Alto è invece la più critica: nonostante specificity elevata (98,81%
 
 ```{r, warning=FALSE}
 # Effettua le previsioni sul set di training
-predictions_train_probs <- predict(boost.final, newdata = train, n.trees = best_nt, type = "response")
+predictions_train_probs <- predict(boost.final, newdata = train, 
+                                   n.trees = best_nt, type = "response")
 predictions_train <- apply(predictions_train_probs, 1, which.max)
-predicted_classes_train <- levels(train$Categorical_Exam_Score)[predictions_train]
+predicted_classes_train <- levels(
+  train$Categorical_Exam_Score)[predictions_train]
 
 # Effettua le previsioni sul set di test
-predictions_test_probs <- predict(boost.final, newdata = test, n.trees = best_nt, type = "response")
+predictions_test_probs <- predict(boost.final, newdata = test, 
+                                  n.trees = best_nt, type = "response")
 predictions_test <- apply(predictions_test_probs, 1, which.max)
 predicted_classes_test <- levels(test$Categorical_Exam_Score)[predictions_test]
 
 # Confusion matrix sul set di training
-confusion_matrix_train <- confusionMatrix(factor(predicted_classes_train, levels = levels(train$Categorical_Exam_Score)), train$Categorical_Exam_Score)
+confusion_matrix_train <- confusionMatrix(
+  factor(predicted_classes_train, levels = levels(train$Categorical_Exam_Score)),
+  train$Categorical_Exam_Score)
 print("Confusion Matrix - Training Set:")
 print(confusion_matrix_train)
 
 # Calcola l'accuracy sul set di test
-confusion_matrix_test <- confusionMatrix(factor(predicted_classes_test, levels = levels(test$Categorical_Exam_Score)), test$Categorical_Exam_Score)
+confusion_matrix_test <- confusionMatrix(
+  factor(predicted_classes_test, levels = levels(test$Categorical_Exam_Score)), 
+  test$Categorical_Exam_Score)
 print("Confusion Matrix - Test Set:")
 print(confusion_matrix_test)
 ```
@@ -697,58 +1093,14 @@ summary(boost.final)
 ```
 
 
-## CART
-
-```{r}
-require(rpart)
-library(rpart.plot)
-
-mod0<- rpart::rpart(Categorical_Exam_Score~., data= train, method="class")
-mod0
-```
-
-```{r}
-rpart.plot::rpart.plot(mod0)
-```
-
-
-```{r}
-caret::confusionMatrix(table(predicted = predict(mod0, type = "class"), actual = train$Categorical_Exam_Score), positive = "1")
-```
-
-```{r}
-mytab <- table(predicted = predict(mod0, type = "class"), actual = train$Categorical_Exam_Score)
-mctest = (abs(mytab[2,1] - mytab[1,2]) -1)^2/(mytab[2,1] + mytab[1,2])
-mctest
-pchisq(mctest,1, lower.tail = FALSE)
-mcnemar.test(table(predicted = predict(mod0, type = "class"), actual = train$Categorical_Exam_Score), correct = TRUE)
-```
-
-Use of the loss matrix
-
-```{r}
-m = matrix(c(0,0,0,0,0,1.0,
-             0,0,0,0,0.2,0, 
-             0,0,0,0.1,0,0,
-             0,0,0.1,0,0,0, 
-             0,0.2,0,0,0,0, 
-             1.0,0,0,0,0,0),
-           byrow=TRUE, nrow=6)
-m
-mod0_loss<- rpart::rpart(Categorical_Exam_Score~., data= train, method="class", parms=list(loss=m))
-mod0_loss
-```
-```{r}
-rpart.plot::rpart.plot(mod0_loss)
-```
-```{r}
-caret::confusionMatrix(table(predicted = predict(mod0_loss, type = "class"), actual =  train$Categorical_Exam_Score), positive="1")
-```
-
-
-
-
-
-
-
 # Conclusioni
+Dall'analisi condotta emergono alcuni elementi chiave. In primo luogo, le variabili che maggiormente influenzano le prestazioni dei modelli sono le ore di studio settimanali, la percentuale di frequenza alle lezioni e i punteggi ottenuti negli esami precedenti; seguono, con un peso più contenuto, fattori quali le sessioni di tutoraggio e le ore sonno.
+
+Per quanto riguarda i modelli Random Forest, senza l'uso di pesi associati a ciascuna classe si riscontra una marcata difficoltà nel riconoscere adeguatamente le classi meno rappresentate, con un'evidente sottostima delle categorie estreme. L'introduzione dei pesi migliora sensibilmente la capacità di classificare queste classi meno rappresentate, anche se non elimina del tutto il problema. Inoltre, passando a una classificazione in quattro fasce, il modello diventa più stabile, l'errore OOB si riduce e si osserva un miglioramento dell'accuratezza. Al contrario, il riequilibrio tramite SMOTE non si è tradotto in un miglioramento delle prestazioni sul dataset di test; anzi, l'ampliamento del campione ha peggiorato la capacità predittiva complessiva. 
+
+Il modello CART, seppure apprezzabile per la sua semplicità interpretativa, si è mostrato meno efficace rispetto agli altri algoritmi, tendendo a concentrare le predizioni sulle classi centrali e a trascurare quelle estreme.
+
+L'algoritmo di Boosting ha dimostrato una migliore capacità predittiva, raggiungendo un'accuratezza dell’80% sul dataset di test e mostrando un'ottima capacità di generalizzazione una volta ottimizzati gli iperparametri.
+
+In sintesi, il modello che si è rivelato più promettente nella nostra analisi è il modello di Boosting. Le strategie di gestione dello sbilanciamento, seppur teoricamente efficaci, non hanno apportato benefici significativi nel nostro contesto. Mentre, rimangono da considerare le limitazioni legate alle dipendenze tra variabili, in particolare, modelli come CART soffrono quando si tratta di catturare relazioni lineari o prossime alla linearità, come evidenziato nel nostro caso di studio.
+
